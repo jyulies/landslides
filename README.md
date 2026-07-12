@@ -42,6 +42,16 @@
 | 12 | NDVI | 归一化植被指数，Sentinel-2 10 m |
 | 13 | Distance to Road (DTR) | 距道路距离（m），吉林一号影像提取的道路网 |
 
+### 数据与代码来源
+
+本仓库的实现与数据对应作者在原论文中发布的 Zenodo 资源：
+
+| 资源 | Zenodo 记录 | DOI | 内容说明 |
+| :--- | :--- | :--- | :--- |
+| 统计数据集 | [zenodo.org/records/18226013](https://zenodo.org/records/18226013) | [10.5281/zenodo.18226013](https://doi.org/10.5281/zenodo.18226013) | 武平降雨型集群式滑坡统计表格数据 |
+| 训练样本与因子 | [zenodo.org/records/18463063](https://zenodo.org/records/18463063) | [10.5281/zenodo.18463063](https://doi.org/10.5281/zenodo.18463063) | 用于 CNXT-Ti-LT 易发性制图的训练数据集（含 13 个因子栅格） |
+| 模型代码 | [zenodo.org/records/17509051](https://zenodo.org/records/17509051) | [10.5281/zenodo.17509051](https://doi.org/10.5281/zenodo.17509051) | CNXT-Ti-LT 模型官方参考代码 |
+
 ### 引用
 
 如果你在研究中使用了本仓库的代码或模型，请引用论文：
@@ -56,6 +66,34 @@
   year={2026},
   publisher={Wiley},
   doi={10.1029/2025JH001115}
+}
+```
+
+若使用了作者发布的原始数据或官方代码，也请同时引用对应的 Zenodo 记录：
+
+```bibtex
+@dataset{luo2026wupingdata,
+  title={Wuping rainfall clustered landslides statistical data},
+  author={Luo, Senlin},
+  year={2026},
+  publisher={Zenodo},
+  doi={10.5281/zenodo.18226013}
+}
+
+@dataset{luo2026training,
+  title={Training Dataset for {CNXT-Ti-LT} Landslide Susceptibility Mapping},
+  author={Luo, Senlin and Huang, Yu and Mao, Wuwei and Yang, Zhiqiang},
+  year={2026},
+  publisher={Zenodo},
+  doi={10.5281/zenodo.18463063}
+}
+
+@software{luo2026cnxtcode,
+  title={{CNXT-Ti-LT} model code},
+  author={Luo, Senlin and Huang, Yu and Mao, Wuwei and Yang, Zhiqiang},
+  year={2026},
+  publisher={Zenodo},
+  doi={10.5281/zenodo.17509051}
 }
 ```
 
