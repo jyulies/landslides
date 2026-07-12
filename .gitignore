@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project artifacts
+checkpoints/
+logs/
+output/
+sample/*.npy
+
+# Large geospatial / data files
+*.tif
+*.tiff
+*.csv
+!Dataset/*.csv
+
+# OS
+.DS_Store
+Thumbs.db
