@@ -40,7 +40,7 @@
 ### 2. 创建并激活 landslide 环境
 
 打开终端（Windows 上可以使用 **Anaconda Prompt**），执行以下命令：
-
+> 更推荐 Anaconda PowerShell Prompt <- 这个更符合linux 用户习惯
 ```bash
 # 创建名为 landslide 的 Python 3.10 环境
 conda create -n landslide python=3.10 -y
