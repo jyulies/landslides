@@ -1,6 +1,63 @@
-# Landslide Susceptibility Mapping with ConvNeXt-Tiny
+# Landslide Susceptibility Mapping with ConvNeXt-Tiny (CNXT-Ti-LT)
 
-基于 ConvNeXt-Tiny 的滑坡易发性深度学习分类项目。
+> 本仓库是论文 **“CNXT-Ti-LT–Based Multi-Scale Feature–Aware Susceptibility Mapping of Rainfall-Induced Clustered Landslides in Southeast China”** 的参考实现。
+>
+> - **作者**：Senlin Luo, Wuwei Mao, Zhiqiang Yang, Guoming Zheng, Zhonghui He, Jiahuang Wang, Yu Huang  
+> - **期刊**：*Journal of Geophysical Research: Machine Learning and Computation*, 3, e2025JH001115  
+> - **DOI**：[10.1029/2025JH001115](https://doi.org/10.1029/2025JH001115)  
+> - **通讯作者**：Y. Huang ([yhuang@tongji.edu.cn](mailto:yhuang@tongji.edu.cn))  
+> - **研究区**：2024 年 6 月 16 日强降雨诱发集群式滑坡的福建武平及周边粤闽赣交界区。
+
+基于 ConvNeXt-Tiny 与 Lite-Transformer 的滑坡易发性深度学习分类项目。
+
+## 论文基础与模型说明
+
+本研究针对 2024 年 6 月 16 日华南极端降雨诱发的集群式滑坡事件，以福建武平县为核心研究区，构建了一套融合 13 个易发性因子的深度学习制图流程。代码中的网络结构、数据预处理与推理方式均对应论文方法。
+
+### CNXT-Ti-LT 模型
+
+- **输入**：31 × 31 像素、13 通道的因子 patch（中心像元对应一个滑坡点或非滑坡点）。
+- **卷积骨干**：ConvNeXt-Tiny，通过大核深度可分离卷积、倒残差瓶颈与分层下采样扩大有效感受野，提取地形纹理与地貌语义。
+- **多尺度融合**：在 neck 处加入 Feature Pyramid（FPN）与 skip connection，缓解边界模糊与小斑块信息损失。
+- **全局语义分支**：在 Stage-4 后接入 Lite-Transformer，利用多头自注意力（MHSA）刻画 13 个因子之间的长距离结构关系。
+- **输出**：二分类 Softmax 概率，即该 patch 中心像元发生滑坡的易发性。
+
+### 13 个易发性因子
+
+代码中 `config.py` 的 `FACTOR_PATHS` 顺序必须与本表一致。
+
+| 编号 | 因子 | 说明 / 来源 |
+| :--- | :--- | :--- |
+| 1 | Elevation | 高程（m），ALOS 12.5 m DEM |
+| 2 | Slope | 坡度（°），ALOS 12.5 m DEM |
+| 3 | Aspect | 坡向（°），ALOS 12.5 m DEM |
+| 4 | Topographic Position Index (TPI) | 地形位置指数，ALOS 12.5 m DEM |
+| 5 | Landform Class | 基于 TPI 的地形分类，ALOS 12.5 m DEM |
+| 6 | Terrain Ruggedness Index (TRI) | 地形粗糙度指数，ALOS 12.5 m DEM |
+| 7 | Profile Curvature | 剖面曲率，ALOS 12.5 m DEM |
+| 8 | Plan Curvature | 平面曲率，ALOS 12.5 m DEM |
+| 9 | Topographic Wetness Index (TWI) | 地形湿度指数，ALOS 12.5 m DEM |
+| 10 | Lithology | 岩性类型，GliM 全球岩性数据库 |
+| 11 | Distance to Fault (DTF) | 距断层距离（m），全国 1:20 万地质图 |
+| 12 | NDVI | 归一化植被指数，Sentinel-2 10 m |
+| 13 | Distance to Road (DTR) | 距道路距离（m），吉林一号影像提取的道路网 |
+
+### 引用
+
+如果你在研究中使用了本仓库的代码或模型，请引用论文：
+
+```bibtex
+@article{luo2026cnxt,
+  title={CNXT-Ti-LT--Based Multi-Scale Feature--Aware Susceptibility Mapping of Rainfall-Induced Clustered Landslides in Southeast China},
+  author={Luo, Senlin and Mao, Wuwei and Yang, Zhiqiang and Zheng, Guoming and He, Zhonghui and Wang, Jiahuang and Huang, Yu},
+  journal={Journal of Geophysical Research: Machine Learning and Computation},
+  volume={3},
+  pages={e2025JH001115},
+  year={2026},
+  publisher={Wiley},
+  doi={10.1029/2025JH001115}
+}
+```
 
 ## 目录结构
 

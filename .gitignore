@@ -23,6 +23,11 @@ sample/*.npy
 *.csv
 !Dataset/*.csv
 
+# Research papers / documents
+*.pdf
+*.docx
+*.doc
+
 # OS
 .DS_Store
 Thumbs.db
