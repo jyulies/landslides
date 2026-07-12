@@ -31,8 +31,38 @@
 
 ## 环境准备
 
+### 1. 安装 Anaconda
+
+1. 访问 [https://www.anaconda.com/download](https://www.anaconda.com/download)
+2. 下载适合你操作系统的 Anaconda Distribution 安装包（推荐 Python 3.10/3.11 版本）
+3. 运行安装程序，按提示完成安装（Windows 建议勾选 "Add Anaconda to my PATH environment variable"）
+
+### 2. 创建并激活 landslide 环境
+
+打开终端（Windows 上可以使用 **Anaconda Prompt**），执行以下命令：
+
 ```bash
+# 创建名为 landslide 的 Python 3.10 环境
+conda create -n landslide python=3.10 -y
+
+# 激活环境
+conda activate landslide
+```
+
+### 3. 安装项目依赖
+
+在激活的 `landslide` 环境中，进入项目根目录并安装依赖：
+
+```bash
+cd C:\code\landslides
 pip install -r requirements.txt
+```
+
+之后所有脚本都应在 `landslide` 环境中运行：
+
+```bash
+conda activate landslide
+python src/training/train.py
 ```
 
 ## 使用流程
