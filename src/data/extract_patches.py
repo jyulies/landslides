@@ -12,6 +12,16 @@
 
 用法：
     python src/data/extract_patches.py
+
+Reference / 引用：
+    Luo, S., Mao, W., Yang, Z., Zheng, G., He, Z., Wang, J., & Huang, Y. (2026).
+    CNXT-Ti-LT--Based Multi-Scale Feature--Aware Susceptibility Mapping of
+    Rainfall-Induced Clustered Landslides in Southeast China.
+    Journal of Geophysical Research: Machine Learning and Computation,
+    3, e2025JH001115. https://doi.org/10.1029/2025JH001115
+
+    Training dataset / 训练样本与因子: https://doi.org/10.5281/zenodo.18463063
+    Statistical data / 统计表格数据: https://doi.org/10.5281/zenodo.18226013
 """
 
 import os

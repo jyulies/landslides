@@ -5,6 +5,15 @@
 - 瓦片推理：每个瓦片切成 (输出网格 th×tw)，用 unfold 视图产生 patch，分块+分批送 GPU
 - 预测输出为 class=1 的概率图（float32），GeoTIFF，LZW 压缩
 - 默认不做 nodata 检查（你已预处理干净）。如需开启，把 CHECK_NODATA=True 并设置 NODATA_VAL
+
+Reference / 引用：
+    Luo, S., Mao, W., Yang, Z., Zheng, G., He, Z., Wang, J., & Huang, Y. (2026).
+    CNXT-Ti-LT--Based Multi-Scale Feature--Aware Susceptibility Mapping of
+    Rainfall-Induced Clustered Landslides in Southeast China.
+    Journal of Geophysical Research: Machine Learning and Computation,
+    3, e2025JH001115. https://doi.org/10.1029/2025JH001115
+
+    Official model code / 官方代码: https://doi.org/10.5281/zenodo.17509051
 """
 
 import os, sys, math

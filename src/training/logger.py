@@ -1,6 +1,13 @@
 # -*- coding: utf-8 -*-
 """
 简化版论文logger - 保留接口兼容，不依赖原实现
+
+Reference / 引用：
+    Luo, S., Mao, W., Yang, Z., Zheng, G., He, Z., Wang, J., & Huang, Y. (2026).
+    CNXT-Ti-LT--Based Multi-Scale Feature--Aware Susceptibility Mapping of
+    Rainfall-Induced Clustered Landslides in Southeast China.
+    Journal of Geophysical Research: Machine Learning and Computation,
+    3, e2025JH001115. https://doi.org/10.1029/2025JH001115
 """
 import json
 import numpy as np

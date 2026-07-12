@@ -5,6 +5,15 @@ ConvNeXt-Tiny (13-channel, binary) for small patches (e.g., 31x31)
 - Small-stride variant: stem stride 4 -> 2, last downsample stride 2 -> 1
   => total downsample = 8 (31/8 -> 3), keeps spatial info for small patches
 - Added: dropout argument in classifier head
+
+Reference / 引用：
+    Luo, S., Mao, W., Yang, Z., Zheng, G., He, Z., Wang, J., & Huang, Y. (2026).
+    CNXT-Ti-LT--Based Multi-Scale Feature--Aware Susceptibility Mapping of
+    Rainfall-Induced Clustered Landslides in Southeast China.
+    Journal of Geophysical Research: Machine Learning and Computation,
+    3, e2025JH001115. https://doi.org/10.1029/2025JH001115
+
+    Official model code / 官方代码: https://doi.org/10.5281/zenodo.17509051
 """
 
 from typing import Optional

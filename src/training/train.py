@@ -4,6 +4,15 @@ ConvNeXt-Tiny (13ch, 2-class, 31x31 patch) — 修正版 + 论文级日志 + Opt
 开关：
 - USE_OPTUNA=False  → 正常训练 (main)
 - USE_OPTUNA=True   → 用 Optuna 搜索若干超参，objective 内部复用同一套训练流程，但 epoch 减少用于快速评估
+
+Reference / 引用：
+    Luo, S., Mao, W., Yang, Z., Zheng, G., He, Z., Wang, J., & Huang, Y. (2026).
+    CNXT-Ti-LT--Based Multi-Scale Feature--Aware Susceptibility Mapping of
+    Rainfall-Induced Clustered Landslides in Southeast China.
+    Journal of Geophysical Research: Machine Learning and Computation,
+    3, e2025JH001115. https://doi.org/10.1029/2025JH001115
+
+    Official model code / 官方代码: https://doi.org/10.5281/zenodo.17509051
 """
 import os, sys, json, time, csv
 from pathlib import Path
