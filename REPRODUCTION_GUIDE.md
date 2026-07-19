@@ -1,6 +1,6 @@
 # ConvNeXt-Tiny 滑坡易发性分类 —— 从零复现完全指南
 
-> 对应代码：`src/training/train.py`、`src/data/dataset.py`、`src/models/convnext.py`、`src/training/logger.py`  
+> 对应代码：`src/training/train.py`、`src/data/dataset.py`、`src/models/convnext.py`、`src/training/logger.py`、`src/data/extract_patches.py`  
 > 目标：理解每一条代码、每一个包、每一个类的作用，并完整复现训练过程。
 
 ---
@@ -16,10 +16,11 @@
 
 ### 1.2 代码文件关系
 ```
-src/training/train.py          # 训练入口：组装数据、模型、训练循环、指标、日志
-├── src/data/dataset.py        # 自定义 Dataset：从 .npy 文件读取 13 通道样本
-├── src/models/convnext.py     # 改造后的 ConvNeXt-Tiny 模型
-└── src/training/logger.py     # 论文级日志封装（简化版）
+src/data/extract_patches.py     # 数据准备：从 CSV + TIF 切出 13 通道 patch
+src/training/train.py           # 训练入口：组装数据、模型、训练循环、指标、日志
+├── src/data/dataset.py         # 自定义 Dataset：从 .npy 文件读取 13 通道样本
+├── src/models/convnext.py      # 改造后的 ConvNeXt-Tiny 模型
+└── src/training/logger.py      # 论文级日志封装（简化版）
 ```
 
 ### 1.3 复现目标
@@ -57,7 +58,7 @@ conda activate landslide
 pip install torch==2.1.0 torchvision==0.16.0 --index-url https://download.pytorch.org/whl/cu118
 
 # 其他依赖
-pip install numpy scikit-learn tqdm matplotlib optuna
+pip install numpy scikit-learn tqdm matplotlib optuna rasterio pandas
 ```
 
 ### 2.3 代码中每个 import 的作用
@@ -194,56 +195,304 @@ except Exception: pass
 
 ---
 
-## 4. 数据准备：JSON + npy 格式
+## 4. 数据准备：从 CSV 到 JSON + npy
 
-### 4.1 目录结构示例
+> 对应代码：`src/data/extract_patches.py`  
+> 目标：讲清楚“最开始只有 `Dataset/*.csv` 表格，如何变成模型能吃的 `(13, 31, 31)` 样本”。
+
+### 4.1 最开始只有 CSV 表格
+
+当你刚克隆仓库时，`Dataset/` 里只有若干 `.csv` 文件，例如：
+
+```
+Dataset/
+├── wuping_landslide_point_area_elev_stats.csv
+├── wuping_landslide_point_geom_slope_litho_stats.csv
+├── wuping_landslide_ridge_distance.csv
+└── ...
+```
+
+这些表格记录了**滑坡点的属性统计信息**，比如每个滑坡点的：
+- 投影坐标（`x`, `y`，单位：米）
+- 高程、坡度、坡向
+- 面积、岩性、到断层/道路的距离等
+
+但深度学习模型**不会直接读 CSV**，它要的是一个个固定大小的影像块（patch）。所以我们需要先从 CSV 里的坐标出发，到 13 个因子栅格（TIF）上“切”出 31×31 的小块。
+
+### 4.2 为什么需要 `extract_patches.py`？
+
+模型 `convnext_tiny_13ch_31` 的输入是：
+
+```
+形状：(13, 31, 31)
+含义：13 个通道，每个通道 31 行 × 31 列
+中心像元：对应一个“滑坡点”或“非滑坡点”
+```
+
+因此，我们需要做三件事：
+
+1. **滑坡点（label=1）**：从 CSV 读取 `(x, y)`，在 13 个 TIF 上以该坐标为中心切出 31×31 的 patch。
+2. **非滑坡点（label=0）**：不能光用滑坡点训练，否则模型只会猜“全是滑坡”。需要在研究区内随机撒点，但这些点必须**远离滑坡点**（默认 ≥ 500 m），避免和滑坡特征混在一起。
+3. **保存成模型能读的文件**：每个 patch 存成一个 `.npy`，再用 JSON 记录每个文件名对应的标签。
+
+`extract_patches.py` 就是负责完成这三件事的“数据工厂”。
+
+### 4.3 `extract_patches.py` 运行流程概览
+
+```
+Step 1: 读取 13 个因子 TIF → 拼成 (13, H, W) 的大数组
+Step 2: 读取 CSV 中的滑坡点坐标 (x, y)
+Step 3: 在研究区内随机生成非滑坡点，确保距滑坡点 ≥ 500 m
+Step 4: 对每个坐标，在 (13, H, W) 上切 31×31 patch，保存为 .npy
+Step 5: 按 8:2 划分训练集 / 验证集，生成 train_labels.json / val_labels.json
+Step 6: 用 Cohen's d 检查滑坡/非滑坡样本在各通道上的差异，验证数据质量
+```
+
+### 4.4 核心函数详解
+
+#### `read_all_factors()`：把 13 个 TIF 读进内存
+
+```python
+def read_all_factors():
+    bands = []
+    for fp in FACTOR_PATHS:
+        with rasterio.open(fp) as src:
+            bands.append(src.read(1).astype(np.float32))
+    data = np.stack(bands, axis=0)
+    return data
+```
+
+- `rasterio.open(fp)`：打开一个 GeoTIFF 文件。
+- `src.read(1)`：读取第 1 个波段（本项目每个 TIF 只有 1 个波段）。
+- `np.stack(bands, axis=0)`：把 13 个 `(H, W)` 的二维数组沿第 0 维堆叠，得到 `(13, H, W)`。
+
+> 小白提示：这里“通道优先”`13` 放在最前面，和 PyTorch 图像张量的 `(B, C, H, W)` 一致。
+
+#### `read_ls_points_from_csv()`：读取滑坡点坐标
+
+```python
+def read_ls_points_from_csv(csv_path):
+    coords = []
+    with open(csv_path, 'r', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f)
+        for i, row in enumerate(reader):
+            try:
+                x = float(row['x'].strip())
+                y = float(row['y'].strip())
+                coords.append((x, y))
+            except (KeyError, ValueError) as e:
+                if i < 5:
+                    print("  跳过行 %d: %s" % (i, e))
+                continue
+    return coords
+```
+
+- `csv.DictReader`：把 CSV 每一行读成字典，列名就是 key。
+- 默认用 `'x'` 和 `'y'` 两列作为投影坐标。
+- 如果前 5 行有解析错误会打印提示，后面默默跳过，避免中断。
+
+#### `coord_to_rowcol()`：坐标 → 栅格行列号
+
+```python
+def coord_to_rowcol(transform, x, y):
+    r, c = rowcol(transform, x, y)
+    return int(r), int(c)
+```
+
+- TIF 自带一个 `transform`，它描述了“行列号 ↔ 真实地理坐标”的对应关系。
+- `rasterio.transform.rowcol(transform, x, y)` 就是利用这个 transform，把 `(x, y)` 转换成数组里的行 `r`、列 `c`。
+
+#### `extract_patch()`：切 patch（带边界填充）
+
+```python
+def extract_patch(data, row, col, pad=PAD):
+    C, H, W = data.shape
+    r0, r1 = row - pad, row + pad + 1
+    c0, c1 = col - pad, col + pad + 1
+
+    patch = np.zeros((C, PATCH, PATCH), dtype=np.float32)
+
+    pr0, pr1 = max(0, r0), min(H, r1)
+    pc0, pc1 = max(0, c0), min(W, c1)
+    ppr0 = pr0 - r0
+    ppr1 = ppr0 + (pr1 - pr0)
+    ppc0 = pc0 - c0
+    ppc1 = ppc0 + (c1 - c0)
+
+    patch[:, ppr0:ppr1, ppc0:ppc1] = data[:, pr0:pr1, pc0:pc1]
+    return patch
+```
+
+- `PATCH = 31`，`PAD = 15`，所以中心像元上下左右各扩 15 个像元。
+- 如果中心靠近图像边缘，切出来的区域会超出原图范围。
+- 代码用 `np.zeros` 先创建一个全 0 的 31×31 框，再把“有效部分”贴进去，超出的部分保持 0。这叫做**零填充（zero padding）**。
+
+> 小白提示：零填充是为了让靠近边界的点也能被切出固定大小的 patch，避免因为边缘点而丢失样本。
+
+#### `generate_nonls_points()`：生成非滑坡点
+
+这是整个脚本里最需要理解的函数。
+
+**为什么不能随机选点？**
+
+如果完全随机选点，很可能选到离滑坡只有几米的点。那些点虽然当前没滑，但地质条件可能和滑坡点几乎一样，模型学到后会把它们也判成滑坡，导致“假阳性”。
+
+**解决办法**：
+- 在研究区范围内随机撒点。
+- 每个候选点都要检查：到**所有**滑坡点的距离是否 ≥ `MIN_BUFFER_DIST`（默认 500 m）。
+- 太近就扔掉，重新撒。
+
+**加速技巧：网格分桶**
+
+滑坡点可能有成千上万个，如果每个候选点都算一遍“到所有滑坡点的距离”，会非常慢。代码用了“网格分桶”：
+
+1. 把研究区划分成 500 m × 500 m 的网格。
+2. 每个滑坡点放进它所在的网格桶里。
+3. 检查候选点时，只检查它周围几个桶里的滑坡点，而不是全部。
+
+```python
+# 把滑坡点放入网格
+ls_grid = {}
+for lx, ly in ls_coords:
+    ci = int((lx - x_min) / cell_size)
+    cj = int((ly - y_min) / cell_size)
+    key = (ci, cj)
+    if key not in ls_grid:
+        ls_grid[key] = []
+    ls_grid[key].append((lx, ly))
+```
+
+这类似于快递分拣：先按区域把包裹分桶，再找附近几个区域的包裹，不用翻遍整个仓库。
+
+#### `main()`：串联整个流程
+
+```python
+def main():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    np.random.seed(SEED)
+
+    # 1. 读因子
+    data = read_all_factors()
+    C, H, W = data.shape
+
+    # 2. 读滑坡点
+    ls_coords = read_ls_points_from_csv(LS_CSV)
+
+    # 3. 生成非滑坡点
+    n_target = int(len(ls_coords) * N_NONLS_RATIO)
+    nonls_coords = generate_nonls_points(...)
+
+    # 4. 切 patch 并保存
+    ...
+
+    # 5. 训练/验证划分
+    train_names, val_names, train_labels, val_labels = train_test_split(...)
+
+    # 6. 数据质量检查
+    ...
+```
+
+- `N_NONLS_RATIO = 1`：非滑坡点数量 = 滑坡点数量 × 1，即 1:1 正负样本。
+- `train_test_split(..., test_size=0.2, stratify=labels)`：按 8:2 划分，并保持训练集和验证集中滑坡/非滑坡比例一致（分层采样）。
+
+### 4.5 运行 `extract_patches.py`
+
+在 `landslide` 环境中执行：
+
+```bash
+cd C:\code\landslides
+python src/data/extract_patches.py
+```
+
+运行过程中你会看到类似输出：
+
+```
+==================================================
+Step 1: Reading 13 factor TIFs...
+  Factor stack: (13, 18006, 12366)
+  CRS: EPSG:32650
+
+Step 2: Reading landslide points...
+  Landslide points: 25893
+
+Step 3: Generating non-landslide points (buffer >= 500 m)...
+  TIF坐标范围: x=[258000.0, 412000.0], y=[2670000.0, 2810000.0]
+  滑坡缓冲距离: 500 m
+Generating non-LS points: 100%|████████| 25893/25893
+  Generated non-landslide points: 25893
+
+Step 4: Extracting patches...
+Landslide: 100%|████████| 25893/25893
+Non-landslide: 100%|████████| 25893/25893
+
+Step 5: Splitting train/val (8:2)...
+
+Step 6: Validating data quality...
+  Cohen's d (效应量: >0.8=大, 0.5=中, 0.2=小):
+    Ch 0 Elevation      : LS=   417.123  nonLS=   458.234  d=0.234 (SMALL)
+    Ch 1 Slope          : LS=    21.456  nonLS=    15.234  d=0.912 (LARGE)
+    ...
+==================================================
+Done!
+  Total: 51786
+  Train: 41428 (LS=20714, non=20714)
+  Val:   10358 (LS=5179, non=5179)
+  Output: C:\code\landslides\sample
+==================================================
+```
+
+> 注意：实际运行时 `Controlling_Factors/feature/*.tif` 必须存在，否则脚本会报错找不到文件。
+
+### 4.6 生成的目录结构
+
+运行成功后，`sample/` 会变成这样：
+
 ```
 C:\code\landslides\sample\
 ├── train_labels.json
 ├── val_labels.json
-├── sample_00001.npy
-├── sample_00002.npy
-├── sample_00003.npy
+├── ls_00000.npy
+├── ls_00001.npy
+├── nols_00000.npy
+├── nols_00001.npy
 └── ...
 ```
 
-### 4.2 标签文件格式
+### 4.7 标签文件格式
+
 `train_labels.json` / `val_labels.json` 是一个简单的字典：
+
 ```json
 {
-    "sample_00001": 1,
-    "sample_00002": 0,
-    "sample_00003": 1,
+    "ls_00000": 1,
+    "nols_00000": 0,
+    "ls_00001": 1,
     ...
 }
 ```
-- key：样本名（不带 `.npy` 后缀）
-- value：标签，只能是 `0` 或 `1`
 
-### 4.3 样本文件格式
+- key：样本名（不带 `.npy` 后缀）
+- value：标签，`0` 表示非滑坡，`1` 表示滑坡
+
+### 4.8 样本文件格式
+
 每个 `.npy` 文件是一个 `numpy` 数组：
+
 ```python
 import numpy as np
-x = np.load("sample_00001.npy")
+x = np.load("sample/ls_00000.npy")
 print(x.shape)  # 期望输出: (13, 31, 31)
 print(x.dtype)  # 期望输出: float32
 ```
+
 - 维度顺序：**通道优先（Channel-First, CHW）**
 - `13`：通道数
 - `31, 31`：空间高和宽
 
-### 4.4 如何自己生成样本？
-如果你已经从原始遥感影像中切出了 patch：
-```python
-import numpy as np
+### 4.9 归一化参数
 
-# 假设 patch 是一个 (13, 31, 31) 的 numpy 数组
-patch = ...
-np.save(f"sample_{idx:05d}.npy", patch.astype(np.float32))
-```
+代码里使用的 mean/std（来自 `config.py`）：
 
-### 4.5 归一化参数
-代码里使用的 mean/std（第 63–68 行）：
 ```python
 MEAN = [417.616119, 17.790653, 187.580414, -0.012278, 5.720180,
         8.259916, -0.000228, 0.000378, 6.304661, 2.466416,
@@ -252,9 +501,10 @@ STD  = [185.132370, 8.436256, 101.343697, 2.483558, 2.390866,
         3.502158, 0.003821, 0.024846, 3.022274, 1.545655,
         2511.757568, 0.090679, 196.766006]
 ```
-- 这些值应该是根据**整个训练集**的 13 个通道统计出来的
-- 复现时，如果你的数据分布不同，建议重新统计
-- 统计方法：遍历所有训练样本，对每个通道求均值和标准差
+
+- 这些值是根据**整个训练集**的 13 个通道统计出来的。
+- 复现时，如果你的数据分布不同，建议重新统计。
+- 统计方法：遍历所有训练样本，对每个通道求均值和标准差。
 
 ---
 
@@ -921,18 +1171,19 @@ study.optimize(objective, n_trials=N_TRIALS)
 
 ## 11. 完整复现步骤 Checklist
 
-### 步骤 1：准备数据
-- [ ] 创建 `C:\code\landslides\sample\` 目录
-- [ ] 准备 `train_labels.json` 和 `val_labels.json`
-- [ ] 准备所有 `sample_XXXXX.npy` 文件，形状 `(13, 31, 31)`，dtype `float32`
+### 步骤 1：准备数据（从 CSV 生成 patch）
+- [ ] 确认 `Dataset/*.csv` 中存在滑坡点坐标（`x`, `y` 列）
+- [ ] 确认 `Controlling_Factors/feature/` 下 13 个因子 TIF 完整
+- [ ] 运行 `python src/data/extract_patches.py`，生成 `sample/*.npy` 和 `train_labels.json` / `val_labels.json`
 
 ### 步骤 2：安装环境
 - [ ] 安装 Python 3.10
 - [ ] 安装 PyTorch + torchvision（CUDA 版本）
-- [ ] 安装 `numpy scikit-learn tqdm matplotlib optuna`
+- [ ] 安装 `numpy scikit-learn tqdm matplotlib optuna rasterio pandas`
 
 ### 步骤 3：检查代码路径
-- [ ] 确认 `ROOT`、`TRAIN_JSON`、`VAL_JSON` 指向正确位置
+- [ ] 确认 `config.py` 中的 `PROJECT_ROOT`、`FACTOR_PATHS`、`LS_CSV` 指向正确位置
+- [ ] 确认 `src/training/train.py` 中的 `ROOT`、`TRAIN_JSON`、`VAL_JSON` 指向正确位置
 - [ ] 确认 `log_root` 和 `paper_root` 目录存在或可写
 
 ### 步骤 4：运行训练
@@ -1045,7 +1296,7 @@ with torch.no_grad():
 
 本文档从环境、Python 基础、数据、模型、训练、日志、复现、调试等角度完整梳理了 `ConvNeXt-Tiny 滑坡分类` 项目。核心要点：
 
-1. **数据**：13 通道 31×31 的 `.npy` 块 + JSON 标签
+1. **数据**：从 `Dataset/*.csv` 坐标 + `Controlling_Factors/*.tif` 因子，经 `extract_patches.py` 切出 13 通道 31×31 的 `.npy` 块 + JSON 标签
 2. **模型**：基于 torchvision ConvNeXt-Tiny 改造，支持 13 通道输入，减小 stride，加入 Dropout 和 Lite Transformer
 3. **训练**：AdamW + CosineAnnealing + Warmup + AMP + WeightedRandomSampler
 4. **评估**：AUC、PR-AUC、F1、Brier、Youden J 最优阈值
