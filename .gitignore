@@ -28,6 +28,9 @@ sample/*.npy
 *.docx
 *.doc
 
+# Presentation / meeting materials
+docs/
+
 # OS
 .DS_Store
 Thumbs.db
