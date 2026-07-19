@@ -1308,15 +1308,197 @@ with torch.no_grad():
 
 ## 16. ArcGIS Pro 操作基础
 
-> 待补充：研究区数据导入、坐标系设置、TIF 可视化、CSV 点数据加载与导出、坡度/坡向/曲率等地形因子生成、距离分析等常用操作。
+> 目标：掌握把原始数据导入 ArcGIS Pro、生成项目所需的 13 个因子栅格、并导出与 `extract_patches.py` 兼容的 TIF 的基本操作。
 
-（本章为后续补充预留，当前为空。）
+### 16.1 为什么要用 ArcGIS Pro
+
+本项目的 13 个控制因子本质上是**空间栅格数据**。无论原始数据来自 DEM、地质图、遥感影像还是道路矢量，最终都需要：
+- 统一坐标系；
+- 统一空间范围和分辨率；
+- 以相同网格对齐，导出为 GeoTIFF。
+
+ArcGIS Pro 是完成这些空间预处理最常用、最直观的工具之一。
+
+### 16.2 推荐工作空间设置
+
+1. 打开 ArcGIS Pro，新建一个**地图工程**。
+2. 在工程目录下新建文件夹连接，指向 `C:\code\landslides\`。
+3. 建议打开 **Geoprocessing** 面板，后续工具都在里面搜索。
+
+### 16.3 坐标系设置
+
+- 本项目研究区位于福建省武平县及周边，推荐使用 **WGS 1984 UTM Zone 50N**（EPSG:32650）。
+- 在地图属性中设置坐标系为 `EPSG:32650`，确保所有图层都投影到该坐标系。
+- 如果原始数据是 WGS84 经纬度，先用 **Project Raster** / **Project** 工具投影到 UTM。
+
+### 16.4 加载 CSV 点数据
+
+1. 在地图选项卡中选择 **Add Data**，添加 `Dataset/wuping_landslide_point_area_elev_stats.csv`。
+2. 右键 CSV → **Display XY Data**。
+3. X 字段选择 `x`，Y 字段选择 `y`，坐标系选择 `EPSG:32650`。
+4. 导出为 **Shapefile** 或 **File Geodatabase Feature Class**，命名为 `landslide_points`。
+
+### 16.5 加载并可视化 TIF 因子
+
+1. 用 **Add Data** 添加 `Controlling_Factors/feature/*.tif`。
+2. 双击图层 → **Symbology**，选择合适色带。
+3. 检查每个 TIF 的坐标系、像元大小和范围：右键图层 → **Properties** → **Source**。
+
+### 16.6 从 DEM 生成地形因子
+
+如果手头只有原始 DEM，可以用以下 Spatial Analyst 工具生成项目所需因子：
+
+| 因子 | ArcGIS Pro 工具 | 关键参数 |
+| :--- | :--- | :--- |
+| Slope | **Slope** | 输出单位选 `DEGREE` |
+| Aspect | **Aspect** | 默认 |
+| Profile Curvature | **Curvature** | 输出 `profile_curv` |
+| Plan Curvature | **Curvature** | 输出 `plan_curv` |
+| TWI | 先用 **Fill**、**Flow Direction**、**Flow Accumulation**，再用公式 `ln(FA / tan(Slope_rad))` | 注意坡度转弧度 |
+| TRI | **Terrain Ruggedness Index (TRI)** | Spatial Analyst 扩展 |
+| TPI | **Topographic Position Index (TPI)** | 默认窗口 |
+| Landform Class | 用 TPI 阈值分类，或 **Classify Landform** 工具 | 参考 Weiss 2001 方法 |
+
+### 16.7 距离因子生成
+
+- **到断层距离**：将地质图中的断层线矢量化 → 使用 **Euclidean Distance** 工具。
+- **到道路距离**：从道路矢量 → 使用 **Euclidean Distance** 工具。
+
+### 16.8 因子对齐与导出
+
+所有因子必须满足：
+- 同一坐标系 `EPSG:32650`；
+- 同一像元大小（如 12.5 m 或 10 m）；
+- 同一范围（行列数一致）。
+
+如果对齐不完全一致，可用：
+- **Resample**：统一分辨率；
+- **Extract by Mask**：统一范围；
+- **Project Raster**：统一坐标系。
+
+最后用 **Export Raster** 导出为 `.tif`，建议压缩选 `LZW` 或无压缩，数据类型 `float32` 或根据因子类型选择整数。
+
+### 16.9 与 extract_patches.py 的衔接
+
+导出后的 TIF 按以下命名放入 `Controlling_Factors/feature/`：
+
+```
+Elevation.tif
+Slope.tif
+Aspect.tif
+TPI.tif
+Landform class.tif
+TRI.tif
+Profile Curvature.tif
+Plan Curvature.tif
+TWI.tif
+Lithology.tif
+Distance2fault.tif
+NDVI.tif
+Distance2road.tif
+```
+
+顺序必须与 `config.py` 中的 `FACTOR_PATHS` 一致。
+
+### 16.10 常见问题
+
+- **Q：TIF 坐标系不一致怎么办？**  
+  A：先用 `Project Raster` 投影到 `EPSG:32650`，再用 `Resample` 对齐分辨率。
+
+- **Q：像元大小不一致怎么办？**  
+  A：以 DEM 为基准，用 `Resample` 把其他因子重采样到同一分辨率，方法选 `BILINEAR` 或 `NEAREST`。
+
+- **Q：范围不一致怎么办？**  
+  A：用 `Extract by Mask` 或 `Clip` 工具，以研究区边界或基准栅格为范围裁剪。
 
 ---
 
 ## 17. 工程地质分析原理
 
-> 待补充：滑坡形成机理、降雨型群发滑坡控制因素、研究区地层岩性、构造与地貌背景、人类工程活动对斜坡稳定性的影响等。
+> 目标：从地质角度理解为什么要选这 13 个因子，以及模型结果背后的地质含义。
 
-（本章为后续补充预留，当前为空。）
+### 17.1 研究区地质背景
+
+本项目研究区为**福建省武平县及周边粤闽赣交界区**。区域地质特征包括：
+- **构造**：以 NE 向断裂为主，伴随 NW 向和近 EW 向次级断裂，形成复杂的断块构造；
+- **地层**：以侏罗纪—白垩纪火山碎屑岩、流纹岩、花岗岩、砂页岩为主；
+- **地貌**：低山丘陵为主，约 80% 区域海拔低于 800 m，河谷深切，坡脚侵蚀强烈；
+- **气候**：亚热带季风气候，年均降水量 1400 mm 以上，80% 集中在汛期 5–9 月。
+
+2024 年 6 月 16 日，该区域遭遇极端强降雨，24 h 最大降雨量超过 350 mm，触发了大量集群式滑坡。
+
+### 17.2 什么是降雨型集群式滑坡
+
+**集群式滑坡**指在一次极端降雨事件中，同一区域内同时或短时间内大量发生的滑坡。其特点：
+- 群发性和空间聚集性；
+- 单个滑坡面积小，但数量多、分布广；
+- 与短时强降雨、地形、岩性、人类活动密切相关。
+
+理解这一点很重要：我们的模型不是预测某一条具体滑坡，而是评估**哪些区域在类似降雨条件下更容易发生滑坡**。
+
+### 17.3 滑坡易发性概念
+
+**滑坡易发性（Landslide Susceptibility）**是指在特定环境条件下，某区域发生滑坡的相对可能性。
+
+注意：
+- 易发性≠危险性；
+- 易发性≠风险；
+- 易发性只回答"哪里容易滑"，不直接回答"什么时候滑"或"会造成多大损失"。
+
+本项目通过 13 个静态因子来刻画易发性，降雨作为触发因素暂不作为模型输入。
+
+### 17.4 为什么选这 13 个因子
+
+因子选择遵循两个原则：
+1. 覆盖地形、地貌、水文、地质、生态、人类活动六大类；
+2. 数据来源稳定、可获取，不依赖特定事件。
+
+| 类别 | 因子 | 地质意义 |
+| :--- | :--- | :--- |
+| 地形 | Elevation、Slope、Aspect | 控制坡体应力、径流方向和侵蚀强度 |
+| 地貌 | TPI、Landform、TRI、Profile/Plan Curvature | 反映坡体形态和地表过程 |
+| 水文 | TWI | 反映土壤含水量和径流汇聚程度 |
+| 地质 | Lithology、Distance2fault | 控制岩土体强度和结构面发育 |
+| 生态 | NDVI | 反映植被覆盖，间接影响坡面稳定性和侵蚀 |
+| 人类活动 | Distance2road | 道路切坡是人类扰动的重要代理变量 |
+
+### 17.5 各因子与滑坡的关系
+
+- **坡度（Slope）**：坡度越大，重力分量越大，越容易失稳。但也不是越陡越滑，还与岩性、植被有关。
+- **坡向（Aspect）**：影响日照、蒸发和植被，间接影响土壤含水状态。
+- **TWI（地形湿度指数）**：值越高表示越容易积水，降雨入渗后孔隙水压力升高，触发滑坡。
+- **曲率（Curvature）**：凸坡更容易遭受侵蚀和拉张破坏，凹坡容易汇水。
+- **岩性（Lithology）**：软岩、风化强烈的岩体强度低，更易滑。
+- **断层距离（Distance2fault）**：断层带岩石破碎，结构面发育，是滑坡易发区。
+- **道路距离（Distance2road）**：道路切坡破坏原有坡体平衡，且缺乏系统支护，是研究区滑坡高发带。
+- **NDVI**：植被覆盖低的区域，坡面保护弱，侵蚀强。
+
+### 17.6 多因子耦合
+
+单个因子不能决定滑坡是否发生。滑坡是多个因子共同作用的结果：
+- 陡坡 + 强风化岩性 + 强降雨 → 高风险；
+- 缓坡 + 坚硬岩性 + 远离道路 → 低风险。
+
+深度学习模型的优势正是在于捕捉这种**多因子非线性耦合关系**。
+
+### 17.7 如何从地质角度解释模型结果
+
+模型输出的是每个像元的滑坡概率。解释时应结合地质背景：
+- 高概率区是否位于陡坡、强风化岩性、道路切坡或断层附近？
+- 低概率区是否位于平缓台地、坚硬岩体、远离人类活动区？
+- 模型预测的"高易发区"是否与已知滑坡分布一致？
+
+如果模型结果与地质认知严重不符，需要回头检查：数据质量、标签准确性、因子对齐情况、样本采样策略。
+
+### 17.8 与代码的衔接
+
+- `config.py` 中的 `FACTOR_PATHS` 顺序必须与地质因子逻辑一致；
+- `extract_patches.py` 切出的每个 patch，其 13 个通道分别对应上表中的因子；
+- `src/training/diagnose.py` 中的 Cohen's d 检查，可以快速判断哪些因子地质意义最强。
+
+### 17.9 推荐阅读
+
+- 滑坡学入门：`Landslide Types and Processes`（Varnes, 1978; Cruden & Varnes, 1996）
+- 降雨型滑坡：`Rainfall-Induced Landslides`（Guzzetti et al., 2007）
+- 易发性制图方法综述：`Landslide susceptibility mapping`（Reichenbach et al., 2018）
 
