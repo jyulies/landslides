@@ -20,8 +20,18 @@ sample/*.npy
 # Large geospatial / data files
 *.tif
 *.tiff
+*.aux.xml
 *.csv
 !Dataset/*.csv
+
+# Author-provided factor rasters
+Controlling_Factors/
+
+# ArcGIS Pro project (binary, machine-specific)
+MyProject1/
+
+# Claude Code session files
+.claude/
 
 # Research papers / documents
 *.pdf
