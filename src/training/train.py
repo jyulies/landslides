@@ -43,8 +43,13 @@ N_TRIALS     = 20
 TUNE_EPOCHS  = 10
 PRUNE_ON     = True
 
-from config import PROJECT_ROOT, SAMPLE_DIR, CHECKPOINTS_DIR, LOGS_DIR, MEAN, STD, SEED, IN_CH
-from src.data.dataset import LandslideDataset
+# === 数据源开关 ===
+# True: 因子栅格驻留内存、训练时现切 patch（需 train/val_points.json，无需 .npy，
+#       适合大内存服务器）；False: 读取 sample 目录下的 .npy 文件
+USE_RASTER_DATA = True
+
+from config import PROJECT_ROOT, SAMPLE_DIR, CHECKPOINTS_DIR, LOGS_DIR, MEAN, STD, SEED, IN_CH, FACTOR_PATHS, PATCH_SIZE
+from src.data.dataset import LandslideDataset, RasterPatchDataset
 from src.data.transforms import make_transforms
 from src.models.convnext import convnext_tiny_13ch_31
 from src.training.logger import PaperLogger, RunConfig
@@ -64,6 +69,8 @@ except Exception: pass
 ROOT       = str(SAMPLE_DIR)
 TRAIN_JSON = os.path.join(ROOT, "train_labels.json")
 VAL_JSON   = os.path.join(ROOT, "val_labels.json")
+TRAIN_POINTS_JSON = os.path.join(ROOT, "train_points.json")
+VAL_POINTS_JSON   = os.path.join(ROOT, "val_points.json")
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using", DEVICE)
@@ -99,12 +106,16 @@ class CUDAPrefetcher:
 # ===== 数据 + 模型 + 训练的“可复用封装” =====
 def build_dataloaders(batch_size=256, num_workers=4, prefetch_factor=2):
     train_tf, val_tf = make_transforms(MEAN_T, STD_T)
-    train_set = LandslideDataset(ROOT, TRAIN_JSON, transform=train_tf)
-    val_set   = LandslideDataset(ROOT, VAL_JSON,   transform=val_tf)
+    if USE_RASTER_DATA:
+        train_set = RasterPatchDataset(FACTOR_PATHS, TRAIN_POINTS_JSON, transform=train_tf, patch=PATCH_SIZE)
+        val_set   = RasterPatchDataset(FACTOR_PATHS, VAL_POINTS_JSON,   transform=val_tf,   patch=PATCH_SIZE)
+        labels = [it[2] for it in train_set.items]
+        print("Using RasterPatchDataset (in-memory, no .npy needed).")
+    else:
+        train_set = LandslideDataset(ROOT, TRAIN_JSON, transform=train_tf)
+        val_set   = LandslideDataset(ROOT, VAL_JSON,   transform=val_tf)
+        labels = [l for _, l in train_set.samples]
 
-    with open(TRAIN_JSON, "r", encoding="utf-8") as f:
-        train_dict = json.load(f)
-    labels = list(train_dict.values())
     cnt = Counter(labels)
     print("Train label counts:", cnt)
 

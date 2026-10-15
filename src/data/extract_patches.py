@@ -54,6 +54,10 @@ OUTPUT_DIR = str(SAMPLE_DIR)
 PATCH = PATCH_SIZE
 PAD = PATCH // 2  # 15
 
+# False 时不写 .npy，只保存采样点 JSON（配合 RasterPatchDataset 内存直读模式，
+# 适合大内存服务器；True 保持原有 .npy 流程）
+SAVE_NPY = True
+
 
 def read_all_factors():
     """读取所有因子到内存 (13, H, W)"""
@@ -199,12 +203,14 @@ def main():
 
     # 4. 提取patch
     print("\nStep 4: Extracting patches...")
-    all_samples = []
+    all_samples = []   # (name, label, x, y)
+    center_vals = {}   # name -> patch 中心像元各通道值（供 Step 6 验证用）
 
     # 清空旧的sample目录中的npy文件
-    for f in os.listdir(OUTPUT_DIR):
-        if f.endswith('.npy'):
-            os.remove(os.path.join(OUTPUT_DIR, f))
+    if SAVE_NPY:
+        for f in os.listdir(OUTPUT_DIR):
+            if f.endswith('.npy'):
+                os.remove(os.path.join(OUTPUT_DIR, f))
 
     # 滑坡 (label=1)
     skipped_ls = 0
@@ -218,8 +224,10 @@ def main():
                 skipped_ls_nan += 1
                 continue
             name = "ls_%05d" % i
-            np.save(os.path.join(OUTPUT_DIR, name + ".npy"), patch)
-            all_samples.append((name, 1))
+            if SAVE_NPY:
+                np.save(os.path.join(OUTPUT_DIR, name + ".npy"), patch)
+            center_vals[name] = patch[:, PAD, PAD].copy()
+            all_samples.append((name, 1, x, y))
             valid_ls += 1
         else:
             skipped_ls += 1
@@ -236,8 +244,10 @@ def main():
                 skipped_non_nan += 1
                 continue
             name = "nols_%05d" % i
-            np.save(os.path.join(OUTPUT_DIR, name + ".npy"), patch)
-            all_samples.append((name, 0))
+            if SAVE_NPY:
+                np.save(os.path.join(OUTPUT_DIR, name + ".npy"), patch)
+            center_vals[name] = patch[:, PAD, PAD].copy()
+            all_samples.append((name, 0, x, y))
             valid_non += 1
         else:
             skipped_non += 1
@@ -265,6 +275,16 @@ def main():
     with open(os.path.join(OUTPUT_DIR, "val_labels.json"), "w") as f:
         json.dump(val_dict, f, indent=2)
 
+    # 采样点 JSON（内存直读模式 RasterPatchDataset 使用，含投影坐标）
+    coords_by_name = {n: (x, y) for n, _, x, y in all_samples}
+    def _points_records(d):
+        return [{"name": n, "x": coords_by_name[n][0], "y": coords_by_name[n][1], "label": l}
+                for n, l in d.items()]
+    with open(os.path.join(OUTPUT_DIR, "train_points.json"), "w") as f:
+        json.dump(_points_records(train_dict), f)
+    with open(os.path.join(OUTPUT_DIR, "val_points.json"), "w") as f:
+        json.dump(_points_records(val_dict), f)
+
     # 6. 验证数据质量
     print("\nStep 6: Validating data quality...")
     n_check = min(2000, len(train_dict))  # 增加检查样本数，结果更稳定
@@ -274,16 +294,8 @@ def main():
     ls_check = rng.choice(ls_names, size=min(n_check, len(ls_names)), replace=False).tolist()
     nols_check = rng.choice(nols_names, size=min(n_check, len(nols_names)), replace=False).tolist()
 
-    def _center_values(names):
-        """读取每个样本中心像元 (row=15, col=15) 的 13 通道数值。"""
-        vals = []
-        for name in names:
-            arr = np.load(os.path.join(OUTPUT_DIR, name + ".npy")).astype(np.float32)
-            vals.append(arr[:, PAD, PAD])
-        return np.array(vals)
-
-    ls_vals = _center_values(ls_check)
-    nols_vals = _center_values(nols_check)
+    ls_vals = np.array([center_vals[n] for n in ls_check])
+    nols_vals = np.array([center_vals[n] for n in nols_check])
 
     ch_names = ['Elevation', 'Slope', 'Aspect', 'TPI', 'Landform', 'TRI',
                 'ProfileCurv', 'PlanCurv', 'TWI', 'Lithology', 'Dist2fault', 'NDVI', 'Dist2road',
