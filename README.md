@@ -72,11 +72,26 @@
 
 ## 环境准备
 
+方式一（推荐，一条命令；rasterio 走 conda-forge 自带 GDAL，避免源码编译失败）：
+
+```bash
+conda env create -f environment.yml
+conda activate landslide
+```
+
+方式二（手动）：
+
 ```bash
 conda create -n landslide python=3.10 -y
 conda activate landslide
+conda install -c conda-forge rasterio scipy -y   # 地理类库用 conda 装
 pip install -r requirements.txt
 ```
+
+> ⚠️ 不要直接 `pip install rasterio`：部分 Linux 环境没有预编译 wheel，
+> 会因系统 GDAL 版本过低编译失败。务必用 conda-forge 安装。
+> GPU 版 PyTorch 如未被正确安装，请按 [pytorch.org](https://pytorch.org)
+> 提供的命令单独安装（匹配服务器的 CUDA 版本）。
 
 ## 使用流程
 
