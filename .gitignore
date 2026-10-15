@@ -16,6 +16,7 @@ checkpoints/
 logs/
 output/
 sample/*.npy
+sample_yongchuan/*.npy
 
 # Large geospatial / data files
 *.tif
@@ -23,6 +24,7 @@ sample/*.npy
 *.aux.xml
 *.csv
 !Dataset/*.csv
+!Dataset/yonchuan/*.csv
 
 # Author-provided factor rasters
 Controlling_Factors/

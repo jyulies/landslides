@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Data augmentation and normalization transforms for 13-channel landslide patches.
+Data augmentation and normalization transforms for multi-channel landslide patches.
+
+通道数由 config.IN_CH 决定（当前 16 = 13 静态因子 + 3 降雨因子）。
 
 Reference / 引用：
     Luo, S., Mao, W., Yang, Z., Zheng, G., He, Z., Wang, J., & Huang, Y. (2026).
@@ -9,30 +11,36 @@ Reference / 引用：
     Journal of Geophysical Research: Machine Learning and Computation,
     3, e2025JH001115. https://doi.org/10.1029/2025JH001115
 """
+import sys
+from pathlib import Path
+
 import numpy as np
 import torch
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from config import IN_CH
 
-def _is_chw(arr, C_expected=13):
+
+def _is_chw(arr, C_expected=IN_CH):
     return isinstance(arr, np.ndarray) and arr.ndim == 3 and arr.shape[0] == C_expected
 
 
 def _to_tensor_chw(x):
     if isinstance(x, torch.Tensor):
         t = x.float()
-        if t.ndim == 3 and t.shape[0] not in (13,) and t.shape[2] == 13:
+        if t.ndim == 3 and t.shape[0] != IN_CH and t.shape[2] == IN_CH:
             t = t.permute(2, 0, 1).contiguous()
         return t
     a = x.astype(np.float32, copy=False)
     if a.ndim != 3:
         raise ValueError("Expect 3D array")
-    if a.shape[0] != 13 and a.shape[2] == 13:
+    if a.shape[0] != IN_CH and a.shape[2] == IN_CH:
         a = np.transpose(a, (2, 0, 1))
     return torch.from_numpy(a)
 
 
 class RandFlipHV:
-    def __init__(self, p_h=0.5, p_v=0.5, C=13):
+    def __init__(self, p_h=0.5, p_v=0.5, C=IN_CH):
         self.p_h, self.p_v, self.C = p_h, p_v, C
 
     def __call__(self, img):
@@ -43,7 +51,7 @@ class RandFlipHV:
             if np.random.rand() < self.p_v:
                 img = np.flip(img, axis=H_dim).copy()
             return img
-        if img.ndim == 3 and img.shape[0] != 13 and img.shape[2] == 13:
+        if img.ndim == 3 and img.shape[0] != IN_CH and img.shape[2] == IN_CH:
             img = img.permute(2, 0, 1).contiguous()
         if torch.rand(1) < self.p_h:
             img = torch.flip(img, [2])
@@ -53,7 +61,7 @@ class RandFlipHV:
 
 
 class RandRotate90:
-    def __init__(self, C=13):
+    def __init__(self, C=IN_CH):
         self.C = C
 
     def __call__(self, img):
@@ -63,7 +71,7 @@ class RandRotate90:
         if isinstance(img, np.ndarray):
             return np.rot90(img, k=k, axes=(1, 2)).copy() if _is_chw(img, self.C) \
                 else np.rot90(img, k=k, axes=(0, 1)).copy()
-        if img.ndim == 3 and img.shape[0] != 13 and img.shape[2] == 13:
+        if img.ndim == 3 and img.shape[0] != IN_CH and img.shape[2] == IN_CH:
             img = img.permute(2, 0, 1).contiguous()
         return torch.rot90(img, k=k, dims=(1, 2))
 
@@ -99,8 +107,8 @@ class Compose:
 def make_transforms(mean_t, std_t, noise_std=0.01):
     """Build train and validation transform pipelines."""
     train_tf = Compose([
-        RandFlipHV(0.5, 0.5, 13),
-        RandRotate90(13),
+        RandFlipHV(0.5, 0.5, IN_CH),
+        RandRotate90(IN_CH),
         AddGaussianNoise(noise_std),
         NormalizeTensor(mean_t, std_t),
     ])

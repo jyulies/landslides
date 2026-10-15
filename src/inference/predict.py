@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from config import (
     PROJECT_ROOT, FACTOR_PATHS, CHECKPOINTS_DIR, OUTPUT_DIR,
-    MEAN, STD, PATCH_SIZE, STRIDE
+    MEAN, STD, PATCH_SIZE, STRIDE, IN_CH
 )
 from src.models.convnext import convnext_tiny_13ch_31
 
@@ -116,7 +116,7 @@ def main():
     # 1) 数据
     data, transform, crs = read_factors(FACTOR_PATHS)  # (C,H,W)
     C, H, W = data.shape
-    assert C == 13, f"需要13通道，当前为 C={C}"
+    assert C == IN_CH, f"需要{IN_CH}通道，当前为 C={C}"
 
     # 2) 输出网格尺寸（按中心滑窗，步长=STRIDE）
     pad = PATCH // 2
@@ -125,7 +125,7 @@ def main():
     print(f"✔ 因子 shape = ({C},{H},{W})  -> 输出概率图 = ({out_rows},{out_cols})")
 
     # 3) 模型
-    net = convnext_tiny_13ch_31(num_classes=2, in_ch=13, pretrained=False).to(DEVICE).eval()
+    net = convnext_tiny_13ch_31(num_classes=2, in_ch=IN_CH, pretrained=False).to(DEVICE).eval()
     state = torch.load(WEIGHTS, map_location=DEVICE)
     net.load_state_dict(state)
     net = net.to(memory_format=torch.channels_last)

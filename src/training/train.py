@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ConvNeXt-Tiny (13ch, 2-class, 31x31 patch) — 修正版 + 论文级日志 + Optuna超参搜索（逻辑不变）
+ConvNeXt-Tiny (in_ch=config.IN_CH, 2-class, 31x31 patch) — 修正版 + 论文级日志 + Optuna超参搜索（逻辑不变）
 开关：
 - USE_OPTUNA=False  → 正常训练 (main)
 - USE_OPTUNA=True   → 用 Optuna 搜索若干超参，objective 内部复用同一套训练流程，但 epoch 减少用于快速评估
@@ -43,7 +43,7 @@ N_TRIALS     = 20
 TUNE_EPOCHS  = 10
 PRUNE_ON     = True
 
-from config import PROJECT_ROOT, SAMPLE_DIR, CHECKPOINTS_DIR, LOGS_DIR, MEAN, STD, SEED
+from config import PROJECT_ROOT, SAMPLE_DIR, CHECKPOINTS_DIR, LOGS_DIR, MEAN, STD, SEED, IN_CH
 from src.data.dataset import LandslideDataset
 from src.data.transforms import make_transforms
 from src.models.convnext import convnext_tiny_13ch_31
@@ -143,7 +143,7 @@ def build_model(
     lite_defaults.update(lite_kwargs)
 
     net = convnext_tiny_13ch_31(
-        num_classes=2, in_ch=13, pretrained=True, dropout=dropout, **lite_defaults
+        num_classes=2, in_ch=IN_CH, pretrained=True, dropout=dropout, **lite_defaults
     ).to(DEVICE)
     net = net.to(memory_format=torch.channels_last)
     return net
@@ -204,7 +204,7 @@ def run_training(epochs=80, warmup_epochs=3, lr=3e-4, weight_decay=1e-4,
 
     # ===== 论文级 logger（原来就有，保留） =====
     cfg = RunConfig(
-        seed=SEED, model="ConvNeXt-Tiny", in_ch=13, patch=31, epochs=epochs, batch=batch_size,
+        seed=SEED, model="ConvNeXt-Tiny", in_ch=IN_CH, patch=31, epochs=epochs, batch=batch_size,
         lr=lr, weight_decay=weight_decay, optimizer="AdamW", scheduler="CosineAnnealing+Warmup",
         dataset_root=ROOT, train_json=TRAIN_JSON, val_json=VAL_JSON,
         mean=MEAN, std=STD, augment="flip+rot90+gauss(0.01)", device=str(DEVICE),
