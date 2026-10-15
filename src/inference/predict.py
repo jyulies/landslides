@@ -17,7 +17,7 @@ Reference / 引用：
     Official model code / 官方代码: https://doi.org/10.5281/zenodo.17509051
 """
 
-import os, sys, math
+import os, sys, math, json
 from pathlib import Path
 from typing import List, Tuple
 import torch.nn.functional as F
@@ -91,11 +91,15 @@ NODATA_VAL = np.nan   # 如需检查，改成实际 nodata 值
 # 直接复用你的 convnext_tiny_13ch_31
 import torch.nn as nn
 
-# AMP 兼容导入
+# AMP 兼容封装：优先 torch.amp 新 API（避免 FutureWarning），旧版回退 torch.cuda.amp
 try:
-    from torch.cuda.amp import autocast as amp_autocast
-except Exception:
-    from torch.amp import autocast as amp_autocast
+    from torch.amp import autocast as _autocast
+    def amp_autocast(device_type, enabled=True):
+        return _autocast(device_type, enabled=enabled)
+except ImportError:
+    from torch.cuda.amp import autocast as _autocast
+    def amp_autocast(device_type, enabled=True):
+        return _autocast(enabled=enabled)
 
 # =============== 工具函数 ===============
 def read_factors(paths: List[Path]) -> Tuple[np.ndarray, Affine, rasterio.crs.CRS]:
@@ -127,6 +131,20 @@ def make_out_geo(transform: Affine, rows: int, cols: int, pad: int, stride: int)
                   transform.f + pad*transform.e)
 
 # =============== 主预测 ===============
+def _load_model_kwargs(weights_path: str, state: dict) -> dict:
+    """推理模型结构必须与训练时一致（否则 load_state_dict 报 missing keys）。
+    优先读 checkpoint 同目录 run_config.json 的 lite_kwargs（训练时写入）；
+    找不到则从 state_dict 的键推断 Lite-Transformer 是否启用，其余用默认。"""
+    cfg_path = Path(weights_path).parent / "run_config.json"
+    if cfg_path.is_file():
+        with open(cfg_path, encoding="utf-8") as f:
+            lite = json.load(f).get("lite_kwargs") or {}
+        print(f"✔ 模型结构取自 run_config.json: {lite}")
+        return lite
+    use_lite = any(k.startswith("lite.") for k in state)
+    print(f"⚠ 未找到 run_config.json，按权重键推断 use_lite_tf={use_lite}（其余结构参数用默认）")
+    return {"use_lite_tf": use_lite, "lite_tf_blocks": 1 if use_lite else 0}
+
 @torch.no_grad()
 def main():
     # 1) 数据
@@ -140,10 +158,11 @@ def main():
     out_cols = (W - PATCH) // STRIDE + 1
     print(f"✔ 因子 shape = ({C},{H},{W})  -> 输出概率图 = ({out_rows},{out_cols})")
 
-    # 3) 模型
+    # 3) 模型（结构从 run_config.json / 权重键自动恢复，无需手动对齐）
     print(f"✔ 使用权重: {WEIGHTS}")
-    net = convnext_tiny_13ch_31(num_classes=2, in_ch=IN_CH, pretrained=False).to(DEVICE).eval()
     state = torch.load(WEIGHTS, map_location=DEVICE)
+    net = convnext_tiny_13ch_31(num_classes=2, in_ch=IN_CH, pretrained=False,
+                                **_load_model_kwargs(WEIGHTS, state)).to(DEVICE).eval()
     net.load_state_dict(state)
     net = net.to(memory_format=torch.channels_last)
     print("✔ 模型加载完毕")
@@ -189,7 +208,7 @@ def main():
 
             COL_STEP = 64
             tile_probs = np.empty((th, tw), dtype=np.float32)
-            with amp_autocast(enabled=(DEVICE.type == 'cuda')):
+            with amp_autocast(DEVICE.type, enabled=(DEVICE.type == 'cuda')):
                 for c0 in range(0, tw, COL_STEP):
                     c1 = min(c0 + COL_STEP, tw)  # 本次处理的列宽 cw = c1-c0
                     # (th, cw, C, P, P) → (th*cw, C, P, P)

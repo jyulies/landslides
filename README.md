@@ -128,10 +128,17 @@ python src/data/extract_patches.py
 
 ## 超参搜索
 
-`train.py` 内置 Optuna 搜索（`USE_OPTUNA = True` 开启），默认 20 组试验 × 10 epochs，
+```bash
+python src/training/tune.py   # Optuna 搜索：20 组试验 × 10 epochs，独立于 train.py
+```
+
 搜索学习率、正则化（dropout / weight_decay / drop_path 等）与 Lite-Transformer 结构参数。
 结束后打印最优参数与各参数重要性，全部试验结果保存到 `checkpoints/optuna/trials.csv`。
-将最优参数填入 `main()` 并设 `USE_OPTUNA = False` 即可进行完整训练。
+将最优参数填入 `train.py` 的 `main()` 即可进行完整训练。
+
+训练内置**早停**（`train.py` 顶部 `EARLY_STOP/ES_PATIENCE/ES_MIN_DELTA`）：
+监控 val_loss，连续 12 轮无实质改善即停止（val_acc 平台化后 loss 仍会恶化，
+是更敏感的过拟合信号）；best 权重仍按 val_acc 单独保存。
 
 ## 配置说明
 

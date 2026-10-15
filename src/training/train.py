@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-ConvNeXt-Tiny (in_ch=config.IN_CH, 2-class, 31x31 patch) — 修正版 + 论文级日志 + Optuna超参搜索（逻辑不变）
-开关：
-- USE_OPTUNA=False  → 正常训练 (main)
-- USE_OPTUNA=True   → 用 Optuna 搜索若干超参，objective 内部复用同一套训练流程，但 epoch 减少用于快速评估
+ConvNeXt-Tiny (in_ch=config.IN_CH, 2-class, 31x31 patch) — 正式训练入口 + 论文级日志
+
+    python src/training/train.py     # 正式训练（参数在 main() 中）
+    python src/training/tune.py      # Optuna 超参搜索（独立文件，复用本文件的 run_training）
 
 Reference / 引用：
     Luo, S., Mao, W., Yang, Z., Zheng, G., He, Z., Wang, J., & Huang, Y. (2026).
@@ -37,12 +37,6 @@ from sklearn.metrics import (
     roc_curve, precision_recall_curve, accuracy_score
 )
 
-# === Optuna 开关（原逻辑保留） ===
-USE_OPTUNA   = False
-N_TRIALS     = 20
-TUNE_EPOCHS  = 10
-PRUNE_ON     = True
-
 # === 数据源开关 ===
 # True: 因子栅格驻留内存、训练时现切 patch（需 train/val_points.json，无需 .npy，
 #       适合大内存服务器）；False: 读取 sample 目录下的 .npy 文件
@@ -59,11 +53,20 @@ from src.data.transforms import make_transforms
 from src.models.convnext import convnext_tiny_13ch_31
 from src.training.logger import PaperLogger, RunConfig
 
-# AMP 兼容导入
+# AMP 兼容封装：优先 torch.amp 新 API（避免 FutureWarning 每个 epoch 刷屏），
+# 旧版 PyTorch 回退到 torch.cuda.amp
 try:
-    from torch.cuda.amp import autocast as amp_autocast, GradScaler as AMPGradScaler
-except Exception:
-    from torch.amp import autocast as amp_autocast, GradScaler as AMPGradScaler
+    from torch.amp import autocast as _autocast, GradScaler as _GradScaler
+    def amp_autocast(device_type, enabled=True):
+        return _autocast(device_type, enabled=enabled)
+    def make_grad_scaler(device_type, enabled=True):
+        return _GradScaler(device_type, enabled=enabled)
+except ImportError:
+    from torch.cuda.amp import autocast as _autocast, GradScaler as _GradScaler
+    def amp_autocast(device_type, enabled=True):
+        return _autocast(enabled=enabled)
+    def make_grad_scaler(device_type, enabled=True):
+        return _GradScaler(enabled=enabled)
 
 # ====== 全局默认配置（作为“基线”，Optuna 会覆盖其中一部分） ======
 torch.manual_seed(SEED); np.random.seed(SEED)
@@ -208,7 +211,7 @@ def run_training(epochs=80, warmup_epochs=3, lr=3e-4, weight_decay=1e-4,
     optimizer = optim.AdamW(net.parameters(), lr=lr, weight_decay=weight_decay)
     TMAX = max(1, epochs - warmup_epochs)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=TMAX, eta_min=1e-6)
-    scaler = AMPGradScaler(enabled=(DEVICE.type == 'cuda'))
+    scaler = make_grad_scaler(DEVICE.type, enabled=(DEVICE.type == 'cuda'))
 
     # ===== CSV（扩展版） =====
     csv_path = run_dir / "train_history_convnext31_trans.csv"
@@ -254,7 +257,7 @@ def run_training(epochs=80, warmup_epochs=3, lr=3e-4, weight_decay=1e-4,
         run_loss, correct, n = 0.0, 0, 0
         for imgs, labels in tqdm(CUDAPrefetcher(train_loader, DEVICE), desc=f"Train {epoch}/{epochs}", leave=False):
             optimizer.zero_grad(set_to_none=True)
-            with amp_autocast(enabled=(DEVICE.type == 'cuda')):
+            with amp_autocast(DEVICE.type, enabled=(DEVICE.type == 'cuda')):
                 outputs = net(imgs)
                 loss = criterion(outputs, labels)
             scaler.scale(loss).backward()
@@ -274,7 +277,7 @@ def run_training(epochs=80, warmup_epochs=3, lr=3e-4, weight_decay=1e-4,
         y_true, y_score = [], []
         with torch.no_grad():
             for imgs, labels in tqdm(CUDAPrefetcher(val_loader, DEVICE), desc="Valid", leave=False):
-                with amp_autocast(enabled=(DEVICE.type == 'cuda')):
+                with amp_autocast(DEVICE.type, enabled=(DEVICE.type == 'cuda')):
                     outputs = net(imgs)
                     loss = criterion(outputs, labels)
                 logger.add_val_batch(outputs, labels)  # 原论文统计
@@ -367,6 +370,7 @@ def run_training(epochs=80, warmup_epochs=3, lr=3e-4, weight_decay=1e-4,
         if report_to_optuna is not None:
             report_to_optuna.report(vl_acc, step=epoch)
             if prune_on and report_to_optuna.should_prune():
+                import optuna  # 仅超参搜索路径需要，懒加载
                 raise optuna.TrialPruned()
 
         # === 早停：val_loss 连续 es_patience 轮无实质改善则停止 ===
@@ -423,71 +427,7 @@ def main():
     )
     print(f"Finished Training. Best val_acc={best_acc:.4f}")
 
-# ===== Optuna 搜索入口（原逻辑） =====
-if USE_OPTUNA:
-    import optuna
-    def objective(trial: "optuna.trial.Trial"):
-        lr = trial.suggest_float("lr", 1e-5, 5e-3, log=True)
-        weight_decay = trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True)
-        batch_size = trial.suggest_categorical("batch_size", [128, 192, 256, 320])
-        warmup_epochs = trial.suggest_int("warmup_epochs", 0, 5)
-        label_smooth = trial.suggest_float("label_smoothing", 0.0, 0.1)
-        dropout = trial.suggest_float("dropout", 0.0, 0.5)
-
-        lite_tf_blocks = trial.suggest_int("lite_tf_blocks", 0, 2)  # 0 表示关闭
-        lite_tf_dim = trial.suggest_categorical("lite_tf_dim", [128, 160, 192])
-        # 注意：Optuna 的 categorical 不支持动态取值空间，heads 用固定候选
-        # 4 和 8 对 128/160/192 三种 dim 均可整除
-        lite_tf_heads = trial.suggest_categorical("lite_tf_heads", [4, 8])
-        lite_tf_mlp_ratio = trial.suggest_float("lite_tf_mlp_ratio", 1.0, 2.0)
-        lite_tf_drop_path = trial.suggest_float("lite_tf_drop_path", 0.0, 0.2)
-        lite_tf_attn_drop = trial.suggest_float("lite_tf_attn_drop", 0.0, 0.1)
-        lite_tf_proj_drop = trial.suggest_float("lite_tf_proj_drop", 0.0, 0.1)
-
-        model_kwargs = dict(
-            use_lite_tf=(lite_tf_blocks > 0),
-            lite_tf_blocks=lite_tf_blocks,
-            lite_tf_dim=lite_tf_dim,
-            lite_tf_heads=lite_tf_heads,
-            lite_tf_mlp_ratio=lite_tf_mlp_ratio,
-            lite_tf_drop_path=lite_tf_drop_path,
-            lite_tf_attn_drop=lite_tf_attn_drop,
-            lite_tf_proj_drop=lite_tf_proj_drop,
-        )
-
-        try:
-            optuna_log_root = Path(os.environ.get(
-                "OPTUNA_LOG_ROOT", str(CHECKPOINTS_DIR / "optuna" / "logs")))
-            optuna_paper_root = Path(os.environ.get(
-                "OPTUNA_PAPER_ROOT", str(CHECKPOINTS_DIR / "optuna" / "paper")))
-            best_acc = run_training(
-                epochs=TUNE_EPOCHS, warmup_epochs=warmup_epochs,
-                lr=lr, weight_decay=weight_decay,
-                batch_size=batch_size, num_workers=NUM_WORKERS,
-                label_smoothing=label_smooth, dropout=dropout,
-                model_kwargs=model_kwargs,
-                log_root=str(optuna_log_root / f"trial_{trial.number}"),
-                paper_root=str(optuna_paper_root / f"trial_{trial.number}"),
-                report_to_optuna=trial, prune_on=PRUNE_ON
-            )
-        except optuna.TrialPruned:
-            raise
-        return best_acc
-
-    pruner = optuna.pruners.MedianPruner(n_warmup_steps=max(2, TUNE_EPOCHS//4))
-    study = optuna.create_study(direction="maximize", pruner=pruner, study_name="convnext_tiny31_search")
-    study.optimize(objective, n_trials=N_TRIALS)
-    print("\n=== Optuna Best ===")
-    print("best_value (val_acc):", study.best_value)
-    print("best_params:", study.best_params)
-    imp = optuna.importance.get_param_importances(study)
-    print("param_importances:", {k: round(v, 3) for k, v in imp.items()})
-    # 保存全部试验结果，便于事后分析
-    df_trials = study.trials_dataframe()
-    df_trials.to_csv(str(CHECKPOINTS_DIR / "optuna" / "trials.csv"), index=False)
-    print("trials saved to:", CHECKPOINTS_DIR / "optuna" / "trials.csv")
-
-# Windows 入口保护
-if __name__ == "__main__" and not USE_OPTUNA:
+# ===== 入口 =====
+if __name__ == "__main__":
     torch.multiprocessing.freeze_support()
     main()
