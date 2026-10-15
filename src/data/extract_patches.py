@@ -269,29 +269,35 @@ def main():
 
     # 6. 验证数据质量
     print("\nStep 6: Validating data quality...")
-    n_check = min(200, len(train_dict))
-    ls_check = [k for k, v in train_dict.items() if v == 1][:n_check]
-    nols_check = [k for k, v in train_dict.items() if v == 0][:n_check]
+    n_check = min(2000, len(train_dict))  # 增加检查样本数，结果更稳定
+    rng = np.random.RandomState(SEED)
+    ls_names = [k for k, v in train_dict.items() if v == 1]
+    nols_names = [k for k, v in train_dict.items() if v == 0]
+    ls_check = rng.choice(ls_names, size=min(n_check, len(ls_names)), replace=False).tolist()
+    nols_check = rng.choice(nols_names, size=min(n_check, len(nols_names)), replace=False).tolist()
 
-    ls_means = []
-    for name in ls_check:
-        arr = np.load(os.path.join(OUTPUT_DIR, name + ".npy")).astype(np.float32)
-        ls_means.append(arr.mean(axis=(1, 2)))
-    ls_means = np.array(ls_means)
+    def _center_values(names):
+        """读取每个样本中心像元 (row=15, col=15) 的 13 通道数值。"""
+        vals = []
+        for name in names:
+            arr = np.load(os.path.join(OUTPUT_DIR, name + ".npy")).astype(np.float32)
+            vals.append(arr[:, PAD, PAD])
+        return np.array(vals)
 
-    nols_means = []
-    for name in nols_check:
-        arr = np.load(os.path.join(OUTPUT_DIR, name + ".npy")).astype(np.float32)
-        nols_means.append(arr.mean(axis=(1, 2)))
-    nols_means = np.array(nols_means)
+    ls_vals = _center_values(ls_check)
+    nols_vals = _center_values(nols_check)
 
     ch_names = ['Elevation', 'Slope', 'Aspect', 'TPI', 'Landform', 'TRI',
                 'ProfileCurv', 'PlanCurv', 'TWI', 'Lithology', 'Dist2fault', 'NDVI', 'Dist2road']
     print("  Cohen's d (效应量: >0.8=大, 0.5=中, 0.2=小):")
     for i in range(13):
-        ls_m = ls_means[:, i].mean()
-        nols_m = nols_means[:, i].mean()
-        pooled = (ls_means[:, i].std() + nols_means[:, i].std()) / 2
+        ls_m = ls_vals[:, i].mean()
+        nols_m = nols_vals[:, i].mean()
+        ls_s = ls_vals[:, i].std(ddof=1)
+        nols_s = nols_vals[:, i].std(ddof=1)
+        n1, n2 = len(ls_vals), len(nols_vals)
+        # 标准合并标准差（样本标准差）
+        pooled = np.sqrt(((n1 - 1) * ls_s ** 2 + (n2 - 1) * nols_s ** 2) / (n1 + n2 - 2))
         d = abs(ls_m - nols_m) / pooled if pooled > 0 else 0
         level = 'LARGE' if d > 0.8 else ('MEDIUM' if d > 0.5 else ('SMALL' if d > 0.2 else 'tiny'))
         print("    Ch%2d %-15s: LS=%10.3f  nonLS=%10.3f  d=%.3f (%s)" % (i, ch_names[i], ls_m, nols_m, d, level))
