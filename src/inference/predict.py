@@ -32,7 +32,7 @@ from tqdm.auto import tqdm
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from config import (
-    PROJECT_ROOT, FACTOR_PATHS, CHECKPOINTS_DIR, OUTPUT_DIR,
+    PROJECT_ROOT, FACTOR_PATHS, FACTORS_DIR, CHECKPOINTS_DIR, OUTPUT_DIR,
     MEAN, STD, PATCH_SIZE, STRIDE, IN_CH
 )
 from src.models.convnext import convnext_tiny_13ch_31
@@ -59,17 +59,19 @@ if WEIGHTS is None:
         "或设置环境变量 LANDSLIDE_WEIGHTS 指向权重文件" % CHECKPOINTS_DIR
     )
 
-# 输出概率图（class=1 概率）
+# 输出概率图（class=1 概率）。文件名自动带区域名（因子目录的上级目录名，
+# 如 Dataset/yonchuan/factor_aligned -> prob_yonchuan.tif），跨区域预测不会互相覆盖
+_region = Path(FACTORS_DIR).parent.name
 OUT_TIF = os.environ.get(
     "LANDSLIDE_OUTPUT",
-    str(OUTPUT_DIR / "prob_convnext31_trans.tif")
+    str(OUTPUT_DIR / f"prob_{_region}.tif")
 )
 
 # Patch/Stride（和训练保持一致）
 PATCH   = PATCH_SIZE
 
 # 推理批大小（按显存调，P5000上 2048~4096 一般可行；OOM 就减小）
-BATCH   = 2048
+BATCH   = 4096
 
 # 推理瓦片输出网格尺寸（th, tw），越大越快但更吃内存；建议 64~128
 TILE_OUT_H = 128

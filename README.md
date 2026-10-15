@@ -126,6 +126,30 @@ python src/data/shp_centroids_to_csv.py
 python src/data/extract_patches.py
 ```
 
+## 跨区域直接迁移（用永川模型预测新区）
+
+前提（不满足则迁移结果无意义）：① 16 个因子的单位/定义与永川一致；
+② 岩性、地貌的**类别编码与永川同图例**；③ 降雨三因子对应新区滑坡事件的同期降雨。
+
+```bash
+# 1. 新区因子放入 Dataset/<新区>/factor/（可直接用标准命名：Elevation.tif、Slope.tif、
+#    DailyMax.tif 等；标准命名文件视为已清洗——单位米、nodata 规范）
+# 2. 对齐到新区统一网格（--ref 选该区任一 30m 栅格）
+python src/data/align_factors.py --src Dataset/<新区>/factor \
+    --dst Dataset/<新区>/factor_aligned --ref Dataset/<新区>/factor/Elevation.tif
+
+# 3. 直接预测（权重自动取永川最新训练结果，MEAN/STD 保持永川不变）
+#    Windows: set LANDSLIDE_FACTOR_DIR=Dataset/<新区>/factor_aligned
+export LANDSLIDE_FACTOR_DIR=Dataset/<新区>/factor_aligned
+python src/inference/predict.py    # 输出 output/prob_<新区>.tif
+
+# 4. 若有新区滑坡编目 shp，定量评估迁移效果
+python src/inference/eval_transfer.py --prob output/prob_<新区>.tif \
+    --shp Dataset/<新区>/shp/landslides.shp
+```
+
+迁移 AUC 参考：>0.8 良好；0.7~0.8 可接受；<0.7 建议用新区样本微调或重训练。
+
 ## 超参搜索
 
 ```bash
@@ -144,7 +168,8 @@ python src/training/tune.py   # Optuna 搜索：20 组试验 × 10 epochs，独�
 
 - 所有路径由 `config.py` 自动推导（以 `config.py` 所在目录为项目根），克隆到任意位置均可直接运行，无需修改；特殊情况可用环境变量 `LANDSLIDE_ROOT` 覆盖
 - 归一化统计量 `MEAN`/`STD` 已按永川样本集、16 通道预计算；若改动因子或样本，需重算并更新 `config.py`
-- 推理权重/输出路径可用环境变量 `LANDSLIDE_WEIGHTS` / `LANDSLIDE_OUTPUT` 覆盖
+- 推理权重/输出路径可用环境变量 `LANDSLIDE_WEIGHTS` / `LANDSLIDE_OUTPUT` 覆盖；
+  跨区域场景另支持 `LANDSLIDE_FACTOR_DIR`（因子目录）、`LANDSLIDE_SAMPLE_DIR`（样本目录）、`LANDSLIDE_LS_SHP`（滑坡面 shp）
 
 ## 引用
 

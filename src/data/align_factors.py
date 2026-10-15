@@ -13,9 +13,17 @@
 所有输出的 nodata 统一为 NaN（float32）。
 
 用法：
+    # 永川（默认，行为不变）
     python src/data/align_factors.py
+
+    # 新区：因子放入新区目录。源文件名优先匹配 FACTORS 表第一列，
+    # 找不到时回退匹配标准名（即新区可直接用 Elevation.tif 等标准命名）
+    python src/data/align_factors.py \
+        --src Dataset/<新区>/factor --dst Dataset/<新区>/factor_aligned \
+        --ref Dataset/<新区>/factor/<该区任一30m栅格.tif>
 """
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -109,9 +117,16 @@ def align_one(src_path, dst_path, ref_meta, is_categorical, scale, mask_leq):
 
 
 def main():
-    DST_DIR.mkdir(parents=True, exist_ok=True)
+    ap = argparse.ArgumentParser(description="因子栅格对齐到统一参考网格（nodata 统一为 NaN）")
+    ap.add_argument("--src", default=str(SRC_DIR), help="原始因子目录")
+    ap.add_argument("--dst", default=str(DST_DIR), help="对齐后输出目录")
+    ap.add_argument("--ref", default=str(REFERENCE),
+                    help="参考网格栅格（新区选该区任一 30m 栅格，建议 DEM 或降雨）")
+    args = ap.parse_args()
+    src_dir, dst_dir = Path(args.src), Path(args.dst)
+    dst_dir.mkdir(parents=True, exist_ok=True)
 
-    with rasterio.open(REFERENCE) as ref:
+    with rasterio.open(args.ref) as ref:
         ref_meta = {
             "height": ref.height,
             "width": ref.width,
@@ -123,17 +138,23 @@ def main():
         (ref_meta["transform"].a, abs(ref_meta["transform"].e)), ref_meta["crs"]))
 
     for src_name, dst_name, is_cat, scale, mask_leq in FACTORS:
-        src_path = SRC_DIR / src_name
-        dst_path = DST_DIR / dst_name
+        # 优先匹配原始文件名（应用表中针对永川数据的修正）；
+        # 回退匹配标准名——标准命名的文件视为已清洗（单位为米、nodata 规范），不做修正
+        src_path = src_dir / src_name
+        fix_scale, fix_mask = scale, mask_leq
         if not src_path.exists():
-            print("  !! 缺失: %s" % src_name)
+            src_path = src_dir / dst_name
+            fix_scale, fix_mask = 1.0, None
+        dst_path = dst_dir / dst_name
+        if not src_path.exists():
+            print("  !! 缺失: %s（也未找到标准名 %s）" % (src_name, dst_name))
             continue
-        n_valid, n_total = align_one(src_path, dst_path, ref_meta, is_cat, scale, mask_leq)
+        n_valid, n_total = align_one(src_path, dst_path, ref_meta, is_cat, fix_scale, fix_mask)
         print("  %-30s -> %-25s 有效像元 %d/%d (%.1f%%) %s" % (
-            src_name, dst_name, n_valid, n_total,
+            src_path.name, dst_name, n_valid, n_total,
             100.0 * n_valid / n_total, "[分类]" if is_cat else ""))
 
-    print("\n完成，输出目录: %s" % DST_DIR)
+    print("\n完成，输出目录: %s" % dst_dir)
 
 
 if __name__ == "__main__":

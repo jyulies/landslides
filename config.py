@@ -27,12 +27,14 @@ PROJECT_ROOT = Path(os.environ.get("LANDSLIDE_ROOT", Path(__file__).resolve().pa
 # -----------------------------------------------------------------------------
 # 常用目录
 # -----------------------------------------------------------------------------
-SAMPLE_DIR = PROJECT_ROOT / "sample_yongchuan"  # 训练样本输出目录（永川，避免覆盖武平样本）
+SAMPLE_DIR = Path(os.environ.get("LANDSLIDE_SAMPLE_DIR", PROJECT_ROOT / "sample_yongchuan"))  # 训练样本输出目录
 CHECKPOINTS_DIR = PROJECT_ROOT / "checkpoints"  # 模型权重保存目录
 LOGS_DIR = PROJECT_ROOT / "logs"              # 训练日志目录
 OUTPUT_DIR = PROJECT_ROOT / "output"          # 推理结果输出目录
 DATASET_DIR = PROJECT_ROOT / "Dataset" / "yonchuan"  # 永川原始数据目录
-FACTORS_DIR = DATASET_DIR / "factor_aligned"  # 因子 TIF 目录（已对齐到 30m 网格）
+# 因子 TIF 目录（已对齐到 30m 网格）。跨区域预测时用 LANDSLIDE_FACTOR_DIR
+# 指向新区的因子目录即可，其余（权重、MEAN/STD）保持永川不变
+FACTORS_DIR = Path(os.environ.get("LANDSLIDE_FACTOR_DIR", DATASET_DIR / "factor_aligned"))
 
 # -----------------------------------------------------------------------------
 # 16 个控制因子栅格路径（顺序必须与模型输入顺序一致）
@@ -64,7 +66,8 @@ IN_CH = len(FACTOR_PATHS)
 # 表格数据文件（由 src/data/shp_centroids_to_csv.py 从滑坡多边形生成）
 # -----------------------------------------------------------------------------
 LS_CSV = DATASET_DIR / "yongchuan_landslide_centroids.csv"
-LS_SHP = DATASET_DIR / "shp" / "landslides.shp"  # 滑坡面 shapefile（非滑坡点采样时避开）
+# 滑坡面 shapefile（非滑坡点采样时避开；跨区域评估可用 LANDSLIDE_LS_SHP 覆盖）
+LS_SHP = Path(os.environ.get("LANDSLIDE_LS_SHP", DATASET_DIR / "shp" / "landslides.shp"))
 
 # -----------------------------------------------------------------------------
 # 归一化统计量（基于永川 8021 个 16 通道样本 patch 的所有像元计算；
