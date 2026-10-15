@@ -48,6 +48,11 @@ PRUNE_ON     = True
 #       适合大内存服务器）；False: 读取 sample 目录下的 .npy 文件
 USE_RASTER_DATA = True
 
+# === 早停（过拟合防控）：监控 val_loss；val_acc 常已平台化而 loss 持续恶化 ===
+EARLY_STOP   = True
+ES_PATIENCE  = 12    # val_loss 连续 12 轮无实质改善则停止
+ES_MIN_DELTA = 1e-3  # 视为"改善"的最小下降幅度
+
 from config import PROJECT_ROOT, SAMPLE_DIR, CHECKPOINTS_DIR, LOGS_DIR, MEAN, STD, SEED, IN_CH, FACTOR_PATHS, PATCH_SIZE, NUM_WORKERS
 from src.data.dataset import LandslideDataset, RasterPatchDataset
 from src.data.transforms import make_transforms
@@ -165,7 +170,10 @@ def run_training(epochs=80, warmup_epochs=3, lr=3e-4, weight_decay=1e-4,
                  log_root=str(CHECKPOINTS_DIR),
                  paper_root=str(LOGS_DIR),
                  report_to_optuna=None,  # 传入 trial 对象即可上报
-                 prune_on=False):
+                 prune_on=False,
+                 early_stop=True,        # 早停：监控 val_loss（过拟合的敏感信号，
+                 es_patience=12,         # val_acc 常已平台化，loss 却持续恶化）
+                 es_min_delta=1e-3):
 
     # ===== 目录与 run_config =====
     save_root = Path(log_root); save_root.mkdir(parents=True, exist_ok=True)
@@ -181,9 +189,11 @@ def run_training(epochs=80, warmup_epochs=3, lr=3e-4, weight_decay=1e-4,
         "optimizer": {"type":"AdamW","lr":lr,"weight_decay":weight_decay},
         "scheduler": "CosineAnnealingLR (eta_min=1e-6)",
         "label_smoothing": label_smoothing, "dropout": dropout,
+        "early_stop": {"enabled": early_stop, "monitor": "val_loss",
+                       "patience": es_patience, "min_delta": es_min_delta},
         "lite_kwargs": model_kwargs or {},
         "mean": MEAN, "std": STD,
-        "augment": ["flip","rot90","gauss(0.01)","normalize"],
+        "augment": ["flip","rot90","gauss(0.01)","center_jitter","normalize"],
         "torch": torch.__version__, "cuda": (torch.version.cuda or "cpu"),
         "gpu": (torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu")
     }
@@ -229,6 +239,8 @@ def run_training(epochs=80, warmup_epochs=3, lr=3e-4, weight_decay=1e-4,
 
     # ===== 训练循环（逻辑不变） =====
     best_acc = 0.0
+    best_loss = float("inf")   # 早停监控 val_loss
+    es_wait = 0
     train_hist, val_hist = [], []
     for epoch in range(1, epochs+1):
         t0 = time.time()
@@ -357,8 +369,23 @@ def run_training(epochs=80, warmup_epochs=3, lr=3e-4, weight_decay=1e-4,
             if prune_on and report_to_optuna.should_prune():
                 raise optuna.TrialPruned()
 
+        # === 早停：val_loss 连续 es_patience 轮无实质改善则停止 ===
+        # （best 权重仍按 val_acc 单独保存，两者互不干扰）
+        if early_stop:
+            if vl_loss < best_loss - es_min_delta:
+                best_loss = vl_loss
+                es_wait = 0
+            else:
+                es_wait += 1
+                tqdm.write(f"    EarlyStop: val_loss 未改善 {es_wait}/{es_patience} "
+                           f"(best={best_loss:.4f})")
+                if es_wait >= es_patience:
+                    tqdm.write(f"⏹ Early stop at epoch {epoch}: "
+                               f"val_loss 连续 {es_patience} 轮未改善 (best={best_loss:.4f})")
+                    break
+
     # ===== 训练结束：保存 loss/acc 曲线 =====
-    epochs_range = range(1, epochs + 1)
+    epochs_range = range(1, len(train_hist) + 1)
     tr_loss = [x[0] for x in train_hist]; tr_acc = [x[1] for x in train_hist]
     vl_loss = [x[0] for x in val_hist];   vl_acc = [x[1] for x in val_hist]
     plt.figure(figsize=(8, 4))
@@ -391,7 +418,8 @@ def main():
         lr=6.505901908488887e-4, weight_decay=1.336124346419452e-3,
         batch_size=192, num_workers=NUM_WORKERS,
         label_smoothing=0.004651681045747591, dropout=0.24754112669071926,
-        model_kwargs=best_lite
+        model_kwargs=best_lite,
+        early_stop=EARLY_STOP, es_patience=ES_PATIENCE, es_min_delta=ES_MIN_DELTA
     )
     print(f"Finished Training. Best val_acc={best_acc:.4f}")
 
