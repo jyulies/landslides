@@ -38,13 +38,12 @@
 
 - **滑坡编目**：`Dataset/yonchuan/shp/landslides.shp`，2394 个滑坡多边形（EPSG:32648）
 - **质心点**：`Dataset/yonchuan/yongchuan_landslide_centroids.csv`（由多边形生成，正样本采样点）
-- **因子栅格**：原始 TIF 放在 `Dataset/yonchuan/factor/`（不上传 git，需单独获取），对齐后输出到 `Dataset/yonchuan/factor_aligned/`
+- **因子栅格**：`Dataset/yonchuan/factor_aligned/`，16 个已对齐到 30m 网格的 TIF（随仓库分发，约 30MB；已完成 nodata 清洗与单位修正）
 - **样本标签/采样点**：`sample_yongchuan/` 下的 `train/val_labels.json` 与 `train/val_points.json`
 
-> 注：因子 TIF 体积较大不包含在仓库中，需单独获取。
-> 训练默认使用**内存直读模式**（`train.py` 中 `USE_RASTER_DATA = True`）：因子栅格
-> 一次读入内存（16 通道约 31MB），训练时现切 patch，**无需生成 .npy 样本文件**，
-> 采样点 JSON 已随仓库提供，拿到因子 TIF 后直接训练即可。
+> 仓库自带因子栅格与采样点，**克隆后可直接训练**（内存直读模式，
+> `train.py` 中 `USE_RASTER_DATA = True`：因子一次读入内存约 31MB，
+> 训练时现切 patch，无需生成 .npy 样本文件）。
 
 ## 目录结构
 
@@ -82,19 +81,19 @@ pip install -r requirements.txt
 ## 使用流程
 
 ```bash
-# 1. 因子对齐：把 Dataset/yonchuan/factor/ 下来源不一的 TIF 重投影到 30m 统一网格
-python src/data/align_factors.py
-
-# 2. 训练（默认内存直读模式，直接用 factor_aligned/ 的 TIF + 仓库自带采样点 JSON）
+# 1. 训练（克隆后可直接运行：因子栅格与采样点已随仓库分发）
 python src/training/train.py
 
-# 3. 全图推理（输出滑坡概率 GeoTIFF 到 output/）
+# 2. 全图推理（输出滑坡概率 GeoTIFF 到 output/）
 python src/inference/predict.py
 ```
 
-可选步骤（修改采样策略或因子后需要重跑）：
+可选步骤（仅当更换原始因子或调整采样策略时需要）：
 
 ```bash
+# 因子对齐：把 Dataset/yonchuan/factor/ 下的原始 TIF 重投影到 30m 统一网格
+python src/data/align_factors.py
+
 # 滑坡多边形 -> 质心点 CSV（仓库已附带生成结果）
 python src/data/shp_centroids_to_csv.py
 
