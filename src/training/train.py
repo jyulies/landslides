@@ -48,7 +48,7 @@ PRUNE_ON     = True
 #       适合大内存服务器）；False: 读取 sample 目录下的 .npy 文件
 USE_RASTER_DATA = True
 
-from config import PROJECT_ROOT, SAMPLE_DIR, CHECKPOINTS_DIR, LOGS_DIR, MEAN, STD, SEED, IN_CH, FACTOR_PATHS, PATCH_SIZE
+from config import PROJECT_ROOT, SAMPLE_DIR, CHECKPOINTS_DIR, LOGS_DIR, MEAN, STD, SEED, IN_CH, FACTOR_PATHS, PATCH_SIZE, NUM_WORKERS
 from src.data.dataset import LandslideDataset, RasterPatchDataset
 from src.data.transforms import make_transforms
 from src.models.convnext import convnext_tiny_13ch_31
@@ -389,7 +389,7 @@ def main():
     best_acc = run_training(
         epochs=80, warmup_epochs=5,
         lr=6.505901908488887e-4, weight_decay=1.336124346419452e-3,
-        batch_size=192, num_workers=0,
+        batch_size=192, num_workers=NUM_WORKERS,
         label_smoothing=0.004651681045747591, dropout=0.24754112669071926,
         model_kwargs=best_lite
     )
@@ -435,7 +435,7 @@ if USE_OPTUNA:
             best_acc = run_training(
                 epochs=TUNE_EPOCHS, warmup_epochs=warmup_epochs,
                 lr=lr, weight_decay=weight_decay,
-                batch_size=batch_size, num_workers=0,
+                batch_size=batch_size, num_workers=NUM_WORKERS,
                 label_smoothing=label_smooth, dropout=dropout,
                 model_kwargs=model_kwargs,
                 log_root=str(optuna_log_root / f"trial_{trial.number}"),

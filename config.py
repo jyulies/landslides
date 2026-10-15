@@ -15,6 +15,7 @@ Reference / 引用：
     Training dataset / 训练样本与因子: https://doi.org/10.5281/zenodo.18463063
 """
 import os
+import sys
 from pathlib import Path
 
 # -----------------------------------------------------------------------------
@@ -89,7 +90,9 @@ SEED = 42
 PATCH_SIZE = 31
 STRIDE = 2
 BATCH_SIZE = 256
-NUM_WORKERS = 0  # Windows 下的默认值；在 Linux/macOS 上若稳定可增大
+# Windows 下 DataLoader 多进程需 spawn（Optuna 路径会崩），用 0；
+# Linux/macOS 用 fork，可安全开大
+NUM_WORKERS = 0 if sys.platform == "win32" else 8
 NONLS_BUFFER_DIST = 0  # 单位：米，非滑坡点与滑坡面边界的最小距离；0 = 仅避开面本身
 N_NONLS_RATIO = 1      # 非滑坡点数量 = 滑坡点数量 × 该比例
 
