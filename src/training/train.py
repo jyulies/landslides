@@ -364,9 +364,23 @@ def run_training(epochs=80, warmup_epochs=3, lr=3e-4, weight_decay=1e-4,
 # ===== 你原来的 main（保持运行逻辑不变） =====
 # 原来是batch_size=256 , num_workers=4  , warmup_epochs=3 , lr=3e-4
 def main():
+    # Optuna 搜索最优参数（checkpoints/optuna/trials.csv, trial 12, 10-epoch val_acc=0.9568）
+    best_lite = dict(
+        use_lite_tf=False,  # lite_tf_blocks=0，搜索发现关闭 Lite-Transformer 更优
+        lite_tf_blocks=0,
+        lite_tf_dim=128,
+        lite_tf_heads=8,
+        lite_tf_mlp_ratio=1.4229852866853823,
+        lite_tf_drop_path=0.11678290603699312,
+        lite_tf_attn_drop=0.0812338972506113,
+        lite_tf_proj_drop=0.008057967592668941,
+    )
     best_acc = run_training(
-        epochs=80, warmup_epochs=3, lr=3e-4, weight_decay=1e-4,
-        batch_size=256, num_workers=0, label_smoothing=0.05, dropout=0.0
+        epochs=80, warmup_epochs=5,
+        lr=6.505901908488887e-4, weight_decay=1.336124346419452e-3,
+        batch_size=192, num_workers=0,
+        label_smoothing=0.004651681045747591, dropout=0.24754112669071926,
+        model_kwargs=best_lite
     )
     print(f"Finished Training. Best val_acc={best_acc:.4f}")
 
@@ -383,8 +397,9 @@ if USE_OPTUNA:
 
         lite_tf_blocks = trial.suggest_int("lite_tf_blocks", 0, 2)  # 0 表示关闭
         lite_tf_dim = trial.suggest_categorical("lite_tf_dim", [128, 160, 192])
-        heads_candidates = {128: [4, 8], 160: [5, 10], 192: [3, 6, 8]}
-        lite_tf_heads = trial.suggest_categorical("lite_tf_heads", heads_candidates[lite_tf_dim])
+        # 注意：Optuna 的 categorical 不支持动态取值空间，heads 用固定候选
+        # 4 和 8 对 128/160/192 三种 dim 均可整除
+        lite_tf_heads = trial.suggest_categorical("lite_tf_heads", [4, 8])
         lite_tf_mlp_ratio = trial.suggest_float("lite_tf_mlp_ratio", 1.0, 2.0)
         lite_tf_drop_path = trial.suggest_float("lite_tf_drop_path", 0.0, 0.2)
         lite_tf_attn_drop = trial.suggest_float("lite_tf_attn_drop", 0.0, 0.1)
@@ -409,7 +424,7 @@ if USE_OPTUNA:
             best_acc = run_training(
                 epochs=TUNE_EPOCHS, warmup_epochs=warmup_epochs,
                 lr=lr, weight_decay=weight_decay,
-                batch_size=batch_size, num_workers=4,
+                batch_size=batch_size, num_workers=0,
                 label_smoothing=label_smooth, dropout=dropout,
                 model_kwargs=model_kwargs,
                 log_root=str(optuna_log_root / f"trial_{trial.number}"),
@@ -426,6 +441,12 @@ if USE_OPTUNA:
     print("\n=== Optuna Best ===")
     print("best_value (val_acc):", study.best_value)
     print("best_params:", study.best_params)
+    imp = optuna.importance.get_param_importances(study)
+    print("param_importances:", {k: round(v, 3) for k, v in imp.items()})
+    # 保存全部试验结果，便于事后分析
+    df_trials = study.trials_dataframe()
+    df_trials.to_csv(str(CHECKPOINTS_DIR / "optuna" / "trials.csv"), index=False)
+    print("trials saved to:", CHECKPOINTS_DIR / "optuna" / "trials.csv")
 
 # Windows 入口保护
 if __name__ == "__main__" and not USE_OPTUNA:

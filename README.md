@@ -1,60 +1,116 @@
-# Landslide Susceptibility Mapping with ConvNeXt-Tiny (CNXT-Ti-LT)
+# 重庆永川区滑坡易发性制图（CNXT-Ti-LT，16 通道）
 
-> 本仓库是论文 **“CNXT-Ti-LT–Based Multi-Scale Feature–Aware Susceptibility Mapping of Rainfall-Induced Clustered Landslides in Southeast China”** 的参考实现。
->
-> - **作者**：Senlin Luo, Wuwei Mao, Zhiqiang Yang, Guoming Zheng, Zhonghui He, Jiahuang Wang, Yu Huang  
-> - **期刊**：*Journal of Geophysical Research: Machine Learning and Computation*, 3, e2025JH001115  
-> - **DOI**：[10.1029/2025JH001115](https://doi.org/10.1029/2025JH001115)  
-> - **通讯作者**：Y. Huang ([yhuang@tongji.edu.cn](mailto:yhuang@tongji.edu.cn))  
-> - **研究区**：2024 年 6 月 16 日强降雨诱发集群式滑坡的福建武平及周边粤闽赣交界区。
+基于 ConvNeXt-Tiny + Lite-Transformer 的滑坡易发性深度学习制图项目，研究区为**重庆市永川区**。
 
-基于 ConvNeXt-Tiny 与 Lite-Transformer 的滑坡易发性深度学习分类项目。
+模型方法参考论文 **"CNXT-Ti-LT–Based Multi-Scale Feature–Aware Susceptibility Mapping of Rainfall-Induced Clustered Landslides in Southeast China"**（Luo et al., 2026, *JGR: Machine Learning and Computation*, [10.1029/2025JH001115](https://doi.org/10.1029/2025JH001115)），在其 13 因子体系上扩展了 3 个降雨因子。
 
-## 论文基础与模型说明
+## 模型
 
-本研究针对 2024 年 6 月 16 日华南极端降雨诱发的集群式滑坡事件，以福建武平县为核心研究区，构建了一套融合 13 个易发性因子的深度学习制图流程。代码中的网络结构、数据预处理与推理方式均对应论文方法。
+- **输入**：31 × 31 像素、16 通道因子 patch（中心像元对应一个滑坡/非滑坡样本点）
+- **卷积骨干**：ConvNeXt-Tiny（首层卷积由 3 通道 ImageNet 权重扩展至 16 通道）
+- **全局语义分支**：Stage-4 后可接 Lite-Transformer（MHSA 刻画因子间长距离关系）
+- **输出**：二分类 Softmax 概率，即中心像元的滑坡易发性
 
-### CNXT-Ti-LT 模型
+## 16 个输入因子
 
-- **输入**：31 × 31 像素、13 通道的因子 patch（中心像元对应一个滑坡点或非滑坡点）。
-- **卷积骨干**：ConvNeXt-Tiny，通过大核深度可分离卷积、倒残差瓶颈与分层下采样扩大有效感受野，提取地形纹理与地貌语义。
-- **多尺度融合**：在 neck 处加入 Feature Pyramid（FPN）与 skip connection，缓解边界模糊与小斑块信息损失。
-- **全局语义分支**：在 Stage-4 后接入 Lite-Transformer，利用多头自注意力（MHSA）刻画 13 个因子之间的长距离结构关系。
-- **输出**：二分类 Softmax 概率，即该 patch 中心像元发生滑坡的易发性。
+`config.py` 中 `FACTOR_PATHS` 的顺序必须与本表一致（通道数由 `config.IN_CH` 统一管理）。
 
-### 13 个易发性因子
-
-代码中 `config.py` 的 `FACTOR_PATHS` 顺序必须与本表一致。
-
-| 编号 | 因子 | 说明 / 来源 |
-| :--- | :--- | :--- |
-| 1 | Elevation | 高程（m），ALOS 12.5 m DEM |
-| 2 | Slope | 坡度（°），ALOS 12.5 m DEM |
-| 3 | Aspect | 坡向（°），ALOS 12.5 m DEM |
-| 4 | Topographic Position Index (TPI) | 地形位置指数，ALOS 12.5 m DEM |
-| 5 | Landform Class | 基于 TPI 的地形分类，ALOS 12.5 m DEM |
-| 6 | Terrain Ruggedness Index (TRI) | 地形粗糙度指数，ALOS 12.5 m DEM |
-| 7 | Profile Curvature | 剖面曲率，ALOS 12.5 m DEM |
-| 8 | Plan Curvature | 平面曲率，ALOS 12.5 m DEM |
-| 9 | Topographic Wetness Index (TWI) | 地形湿度指数，ALOS 12.5 m DEM |
-| 10 | Lithology | 岩性类型，GliM 全球岩性数据库 |
-| 11 | Distance to Fault (DTF) | 距断层距离（m），全国 1:20 万地质图 |
-| 12 | NDVI | 归一化植被指数，Sentinel-2 10 m |
-| 13 | Distance to Road (DTR) | 距道路距离（m），吉林一号影像提取的道路网 |
-
-### 数据与代码来源
-
-本仓库的实现与数据对应作者在原论文中发布的 Zenodo 资源：
-
-| 资源 | Zenodo 记录 | DOI | 内容说明 |
+| 编号 | 因子 | 文件 | 说明 |
 | :--- | :--- | :--- | :--- |
-| 统计数据集 | [zenodo.org/records/18226013](https://zenodo.org/records/18226013) | [10.5281/zenodo.18226013](https://doi.org/10.5281/zenodo.18226013) | 武平降雨型集群式滑坡统计表格数据 |
-| 训练样本与因子 | [zenodo.org/records/18463063](https://zenodo.org/records/18463063) | [10.5281/zenodo.18463063](https://doi.org/10.5281/zenodo.18463063) | 用于 CNXT-Ti-LT 易发性制图的训练数据集（含 13 个因子栅格） |
-| 模型代码 | [zenodo.org/records/17509051](https://zenodo.org/records/17509051) | [10.5281/zenodo.17509051](https://doi.org/10.5281/zenodo.17509051) | CNXT-Ti-LT 模型官方参考代码 |
+| 1 | Elevation | Elevation.tif | 高程（m） |
+| 2 | Slope | Slope.tif | 坡度（°） |
+| 3 | Aspect | Aspect.tif | 坡向（°） |
+| 4 | TPI | TPI.tif | 地形位置指数 |
+| 5 | Landform class | Landform class.tif | 地貌分类（类别） |
+| 6 | TRI | TRI.tif | 地形粗糙度指数 |
+| 7 | Profile Curvature | Profile Curvature.tif | 剖面曲率 |
+| 8 | Plan Curvature | Plan Curvature.tif | 平面曲率 |
+| 9 | TWI | TWI.tif | 地形湿度指数 |
+| 10 | Lithology | Lithology.tif | 岩性（类别） |
+| 11 | Distance2fault | Distance2fault.tif | 距断层距离（m） |
+| 12 | NDVI | NDVI.tif | 归一化植被指数 |
+| 13 | Distance2road | Distance2road.tif | 距道路距离（m） |
+| 14 | DailyMax | DailyMax.tif | 最大单日降雨（mm） |
+| 15 | Acc3d | Acc3d.tif | 3 日累计降雨（mm） |
+| 16 | Acc7d | Acc7d.tif | 7 日累计降雨（mm） |
 
-### 引用
+## 数据
 
-如果你在研究中使用了本仓库的代码或模型，请引用论文：
+- **滑坡编目**：`Dataset/yonchuan/shp/landslides.shp`，2394 个滑坡多边形（EPSG:32648）
+- **质心点**：`Dataset/yonchuan/yongchuan_landslide_centroids.csv`（由多边形生成，正样本采样点）
+- **因子栅格**：原始 TIF 放在 `Dataset/yonchuan/factor/`（不上传 git，需单独获取），对齐后输出到 `Dataset/yonchuan/factor_aligned/`
+- **样本标签**：`sample_yongchuan/train_labels.json` / `val_labels.json`
+
+> 注：`.npy` 训练样本与因子 TIF 体积较大，不包含在仓库中；按下面"使用流程"重新生成。
+
+## 目录结构
+
+```
+.
+├── config.py                      # 集中配置：路径、16 因子、归一化统计量、超参
+├── requirements.txt
+├── src/
+│   ├── data/
+│   │   ├── align_factors.py       # 因子栅格重投影到 30m 统一网格 + nodata 清洗
+│   │   ├── shp_centroids_to_csv.py# 滑坡多边形 -> 质心点 CSV
+│   │   ├── extract_patches.py     # 提取 31x31 patch 训练样本
+│   │   ├── dataset.py             # PyTorch Dataset
+│   │   └── transforms.py          # 数据增强与归一化
+│   ├── models/
+│   │   └── convnext.py            # ConvNeXt-Tiny 多通道改造 + Lite-Transformer
+│   ├── training/
+│   │   ├── train.py               # 训练入口（支持 Optuna 超参搜索）
+│   │   ├── logger.py              # 论文级日志
+│   │   └── diagnose.py            # 数据/模型诊断
+│   └── inference/
+│       └── predict.py             # 全图推理（瓦片 + AMP）
+├── Dataset/yonchuan/              # 滑坡 shp、质心 CSV、因子栅格（TIF 不上传）
+└── sample_yongchuan/              # 训练样本 (.npy 不上传) 与标签 (.json)
+```
+
+## 环境准备
+
+```bash
+conda create -n landslide python=3.10 -y
+conda activate landslide
+pip install -r requirements.txt
+```
+
+## 使用流程
+
+```bash
+# 1. 因子对齐：把 Dataset/yonchuan/factor/ 下来源不一的 TIF 重投影到 30m 统一网格
+python src/data/align_factors.py
+
+# 2. 滑坡多边形 -> 质心点 CSV（仓库已附带生成结果，可跳过）
+python src/data/shp_centroids_to_csv.py
+
+# 3. 提取训练样本（非滑坡点随机采样，避开滑坡面掩膜；含 NaN 的 patch 自动剔除）
+python src/data/extract_patches.py
+
+# 4. 训练（默认直接训练；把 train.py 中 USE_OPTUNA 改为 True 可先跑超参搜索）
+python src/training/train.py
+
+# 5. 全图推理（输出滑坡概率 GeoTIFF 到 output/）
+python src/inference/predict.py
+```
+
+## 超参搜索
+
+`train.py` 内置 Optuna 搜索（`USE_OPTUNA = True` 开启），默认 20 组试验 × 10 epochs，
+搜索学习率、正则化（dropout / weight_decay / drop_path 等）与 Lite-Transformer 结构参数。
+结束后打印最优参数与各参数重要性，全部试验结果保存到 `checkpoints/optuna/trials.csv`。
+将最优参数填入 `main()` 并设 `USE_OPTUNA = False` 即可进行完整训练。
+
+## 配置说明
+
+- 项目根目录默认为 `C:\code\landslides`，其他位置请设置环境变量 `LANDSLIDE_ROOT` 或修改 `config.py` 中 `PROJECT_ROOT`
+- 归一化统计量 `MEAN`/`STD` 已按永川样本集、16 通道预计算；若改动因子或样本，需重算并更新 `config.py`
+- 推理权重/输出路径可用环境变量 `LANDSLIDE_WEIGHTS` / `LANDSLIDE_OUTPUT` 覆盖
+
+## 引用
+
+模型方法源自以下论文，使用本仓库代码请引用：
 
 ```bibtex
 @article{luo2026cnxt,
@@ -68,162 +124,3 @@
   doi={10.1029/2025JH001115}
 }
 ```
-
-若使用了作者发布的原始数据或官方代码，也请同时引用对应的 Zenodo 记录：
-
-```bibtex
-@dataset{luo2026wupingdata,
-  title={Wuping rainfall clustered landslides statistical data},
-  author={Luo, Senlin},
-  year={2026},
-  publisher={Zenodo},
-  doi={10.5281/zenodo.18226013}
-}
-
-@dataset{luo2026training,
-  title={Training Dataset for {CNXT-Ti-LT} Landslide Susceptibility Mapping},
-  author={Luo, Senlin and Huang, Yu and Mao, Wuwei and Yang, Zhiqiang},
-  year={2026},
-  publisher={Zenodo},
-  doi={10.5281/zenodo.18463063}
-}
-
-@software{luo2026cnxtcode,
-  title={{CNXT-Ti-LT} model code},
-  author={Luo, Senlin and Huang, Yu and Mao, Wuwei and Yang, Zhiqiang},
-  year={2026},
-  publisher={Zenodo},
-  doi={10.5281/zenodo.17509051}
-}
-```
-
-## 目录结构
-
-```
-.
-├── config.py                  # 集中配置：路径、归一化参数、超参
-├── requirements.txt           # Python 依赖
-├── src/                       # 核心源码
-│   ├── data/
-│   │   ├── extract_patches.py # 从 CSV + TIF 提取训练 patch
-│   │   ├── dataset.py         # PyTorch Dataset
-│   │   └── transforms.py      # 数据增强与归一化
-│   ├── models/
-│   │   └── convnext.py        # ConvNeXt-Tiny 13 通道改造模型
-│   ├── training/
-│   │   ├── train.py           # 训练入口
-│   │   ├── logger.py          # 论文级日志
-│   │   └── diagnose.py        # 数据/模型诊断
-│   └── inference/
-│       └── predict.py         # 全图推理
-├── sample/                    # 训练样本 (.npy) 与标签 (.json)
-├── checkpoints/               # 模型权重与训练日志
-├── logs/                      # 论文级日志
-├── output/                    # 推理概率图
-├── Dataset/                   # 原始表格数据
-└── Controlling_Factors/       # 13 个因子栅格 (TIF)
-```
-
-## 快速开始
-
-### 1. 克隆仓库
-
-打开终端，选择你希望存放项目的目录，执行：
-
-```bash
-git clone https://github.com/jyulies/landslides.git
-```
-
-克隆完成后，进入项目根目录：
-
-```bash
-cd landslides
-```
-
-> **项目根目录**是指包含 `config.py`、`requirements.txt`、`src/` 等文件和文件夹的顶层目录。例如：`C:\code\landslides` 或 `D:\projects\landslides`。
-
-### 2. 项目根目录说明
-
-本项目默认将 `C:\code\landslides` 作为根目录，所有数据路径（如 `sample/`、`Dataset/`、`Controlling_Factors/`）都相对于该根目录解析。
-
-如果你把项目放到了其他位置，有两种方式指定新的根目录：
-
-**方式一：设置环境变量（推荐）**
-
-```bash
-# Windows CMD
-set LANDSLIDE_ROOT=C:\your\path\landslides
-
-# Windows PowerShell
-$env:LANDSLIDE_ROOT="C:\your\path\landslides"
-```
-
-**方式二：修改 `config.py`**
-
-打开 `config.py`，将默认路径改为你的实际路径：
-
-```python
-PROJECT_ROOT = Path(r"C:\your\path\landslides")
-```
-
-## 环境准备
-
-### 1. 安装 Anaconda
-
-1. 访问 [https://www.anaconda.com/download](https://www.anaconda.com/download)
-2. 下载适合你操作系统的 Anaconda Distribution 安装包（推荐 Python 3.10/3.11 版本）
-3. 运行安装程序，按提示完成安装（Windows 建议勾选 "Add Anaconda to my PATH environment variable"）
-
-详细的 Anaconda 安装与使用手册可参考 [Anaconda 官方中文用户指南](https://anaconda.org.cn/anaconda/user-guide/)。
-
-### 2. 创建并激活 landslide 环境
-
-打开终端（Windows 上可以使用 **Anaconda Prompt**），执行以下命令：
-> 更推荐 Anaconda PowerShell Prompt <- 这个更符合linux 用户习惯
-
-```bash
-# 创建名为 landslide 的 Python 3.10 环境
-conda create -n landslide python=3.10 -y
-
-# 激活环境
-conda activate landslide
-```
-
-### 3. 安装项目依赖
-
-在激活的 `landslide` 环境中，进入项目根目录并安装依赖：
-
-```bash
-cd C:\code\landslides
-pip install -r requirements.txt
-```
-
-之后所有脚本都应在 `landslide` 环境中运行：
-
-```bash
-conda activate landslide
-python src/training/train.py
-```
-
-## 使用流程
-
-1. **提取训练样本**
-   ```bash
-   python src/data/extract_patches.py
-   ```
-
-2. **训练模型**
-   ```bash
-   python src/training/train.py
-   ```
-
-3. **全图推理**
-   ```bash
-   python src/inference/predict.py
-   ```
-
-## 配置
-
-默认项目根目录为 `C:\code\landslides`。若项目存放路径不同，请参考 [项目根目录说明](#2-项目根目录说明) 进行修改。
-
-更多细节参见 [REPRODUCTION_GUIDE.md](REPRODUCTION_GUIDE.md)。
