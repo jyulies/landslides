@@ -406,22 +406,23 @@ def run_training(epochs=80, warmup_epochs=3, lr=3e-4, weight_decay=1e-4,
 # ===== 你原来的 main（保持运行逻辑不变） =====
 # 原来是batch_size=256 , num_workers=4  , warmup_epochs=3 , lr=3e-4
 def main():
-    # Optuna 搜索最优参数（checkpoints/optuna/trials.csv, trial 12, 10-epoch val_acc=0.9568）
+    # 第二轮 Optuna 搜索最优（新采样：8021 样本/按面划分/中心抖动, 10-epoch val_acc=0.9641）
+    # 两轮搜索一致结论：正则化主导（weight_decay/drop_path/dropout），Lite-Transformer 关闭更优
     best_lite = dict(
-        use_lite_tf=False,  # lite_tf_blocks=0，搜索发现关闭 Lite-Transformer 更优
+        use_lite_tf=False,  # lite_tf_blocks=0
         lite_tf_blocks=0,
-        lite_tf_dim=128,
-        lite_tf_heads=8,
-        lite_tf_mlp_ratio=1.4229852866853823,
-        lite_tf_drop_path=0.11678290603699312,
-        lite_tf_attn_drop=0.0812338972506113,
-        lite_tf_proj_drop=0.008057967592668941,
+        lite_tf_dim=160,
+        lite_tf_heads=4,
+        lite_tf_mlp_ratio=1.442290296479493,
+        lite_tf_drop_path=0.12870445558870705,
+        lite_tf_attn_drop=0.0233269075956137,
+        lite_tf_proj_drop=0.05785342952852038,
     )
     best_acc = run_training(
-        epochs=80, warmup_epochs=5,
-        lr=6.505901908488887e-4, weight_decay=1.336124346419452e-3,
-        batch_size=192, num_workers=NUM_WORKERS,
-        label_smoothing=0.004651681045747591, dropout=0.24754112669071926,
+        epochs=80, warmup_epochs=0,
+        lr=2.864857448930091e-4, weight_decay=3.6653617827733884e-3,
+        batch_size=320, num_workers=NUM_WORKERS,
+        label_smoothing=0.0067162456663185655, dropout=0.25173985530649623,
         model_kwargs=best_lite,
         early_stop=EARLY_STOP, es_patience=ES_PATIENCE, es_min_delta=ES_MIN_DELTA
     )
