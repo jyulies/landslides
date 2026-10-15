@@ -18,9 +18,10 @@ import os
 from pathlib import Path
 
 # -----------------------------------------------------------------------------
-# 项目根目录
+# 项目根目录：默认取 config.py 所在目录（即克隆位置），开箱即用；
+# 需要覆盖时设置 LANDSLIDE_ROOT 环境变量
 # -----------------------------------------------------------------------------
-PROJECT_ROOT = Path(os.environ.get("LANDSLIDE_ROOT", r"C:\code\landslides"))
+PROJECT_ROOT = Path(os.environ.get("LANDSLIDE_ROOT", Path(__file__).resolve().parent))
 
 # -----------------------------------------------------------------------------
 # 常用目录

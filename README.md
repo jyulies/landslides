@@ -104,7 +104,7 @@ python src/inference/predict.py
 
 ## 配置说明
 
-- 项目根目录默认为 `C:\code\landslides`，其他位置请设置环境变量 `LANDSLIDE_ROOT` 或修改 `config.py` 中 `PROJECT_ROOT`
+- 所有路径由 `config.py` 自动推导（以 `config.py` 所在目录为项目根），克隆到任意位置均可直接运行，无需修改；特殊情况可用环境变量 `LANDSLIDE_ROOT` 覆盖
 - 归一化统计量 `MEAN`/`STD` 已按永川样本集、16 通道预计算；若改动因子或样本，需重算并更新 `config.py`
 - 推理权重/输出路径可用环境变量 `LANDSLIDE_WEIGHTS` / `LANDSLIDE_OUTPUT` 覆盖
 
