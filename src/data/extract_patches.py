@@ -1,16 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-从CSV坐标文件提取31x31 patch训练样本
+从滑坡面 shapefile 采样正样本点并提取 31x31 patch 训练样本
 
 输入：
-  - 滑坡点CSV (x, y投影坐标，由 shp_centroids_to_csv.py 从滑坡面生成)
-  - 滑坡面 shapefile（栅格化为掩膜，非滑坡点采样时避开）
-  - 13个因子TIF（已对齐，见 align_factors.py）
+  - 滑坡面 shapefile（面内多点采样；同时栅格化为掩膜供非滑坡点避让）
+  - 16 个因子 TIF（已对齐，见 align_factors.py）
   - 非滑坡点：在全图范围内随机采样，排除滑坡面覆盖的像元
     （可用 NONLS_BUFFER_DIST 额外外扩缓冲，默认 0 = 仅避开面本身）
+
+正样本采样策略（面内多点，替代旧的"每面仅质心 1 点"）：
+  - 每个多边形取"像元中心严格落在面内"的像元（all_touched=False），
+    上限 LS_MAX_POINTS_PER_POLY 个，贪心最远点选取得尽量分散
+  - 内部像元为 0 的多边形（小面，永川约 1/4）回退到质心
+  - 每个点附带 jitter 半径：距离变换给出的"偏移后中心仍在面内"的安全半径，
+    训练时 RasterPatchDataset 每个 epoch 在半径内随机偏移中心（数据增强）
+  - train/val 按多边形划分（同一面的所有点进同一侧），避免空间泄漏
+
 输出：
-  - sample/*.npy (C,31,31) float32 patch（C = len(config.FACTOR_PATHS)）
-  - train_labels.json / val_labels.json
+  - sample/*.npy (C,31,31) float32 patch（SAVE_NPY=True 时；C = len(config.FACTOR_PATHS)）
+  - train/val_labels.json、train/val_points.json（含 x, y, label, pid, j）
 
 用法：
     python src/data/extract_patches.py
@@ -29,7 +37,6 @@ Reference / 引用：
 import os
 import sys
 import json
-import csv
 from pathlib import Path
 
 import numpy as np
@@ -38,15 +45,15 @@ import shapefile  # pyshp
 from rasterio.features import rasterize
 from rasterio.transform import rowcol, xy
 from scipy import ndimage
-from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
 # Allow imports from the project root when running this script directly.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from config import (
-    FACTOR_PATHS, LS_CSV, LS_SHP, SAMPLE_DIR, SEED,
-    PATCH_SIZE, NONLS_BUFFER_DIST, N_NONLS_RATIO
+    FACTOR_PATHS, LS_SHP, SAMPLE_DIR, SEED,
+    PATCH_SIZE, NONLS_BUFFER_DIST, N_NONLS_RATIO,
+    LS_MAX_POINTS_PER_POLY, LS_MAX_JITTER_PX, LS_MIN_JITTER_PX
 )
 
 # ========== 配置 ==========
@@ -56,34 +63,17 @@ PAD = PATCH // 2  # 15
 
 # False 时不写 .npy，只保存采样点 JSON（配合 RasterPatchDataset 内存直读模式，
 # 适合大内存服务器；True 保持原有 .npy 流程）
-SAVE_NPY = True
+SAVE_NPY = False
 
 
 def read_all_factors():
-    """读取所有因子到内存 (13, H, W)"""
+    """读取所有因子到内存 (C, H, W)"""
     bands = []
     for fp in FACTOR_PATHS:
         with rasterio.open(fp) as src:
             bands.append(src.read(1).astype(np.float32))
     data = np.stack(bands, axis=0)
     return data
-
-
-def read_ls_points_from_csv(csv_path):
-    """读取滑坡点CSV中的x,y坐标"""
-    coords = []
-    with open(csv_path, 'r', encoding='utf-8-sig') as f:
-        reader = csv.DictReader(f)
-        for i, row in enumerate(reader):
-            try:
-                x = float(row['x'].strip())
-                y = float(row['y'].strip())
-                coords.append((x, y))
-            except (KeyError, ValueError) as e:
-                if i < 5:
-                    print("  跳过行 %d: %s" % (i, e))
-                continue
-    return coords
 
 
 def coord_to_rowcol(transform, x, y):
@@ -93,7 +83,7 @@ def coord_to_rowcol(transform, x, y):
 
 
 def extract_patch(data, row, col, pad=PAD):
-    """提取以(row,col)为中心的(13,31,31) patch，边界零填充"""
+    """提取以(row,col)为中心的(C,31,31) patch，边界零填充"""
     C, H, W = data.shape
     r0, r1 = row - pad, row + pad + 1
     c0, c1 = col - pad, col + pad + 1
@@ -143,6 +133,88 @@ def build_ls_mask(shp_path, transform, H, W, buffer_dist=0):
     return mask
 
 
+def _polygon_centroid(shp):
+    """pyshp Shape -> 面积加权质心 (x, y)，支持多部件多边形"""
+    pts = shp.points
+    parts = list(shp.parts) + [len(pts)]
+    total_a, cx_sum, cy_sum = 0.0, 0.0, 0.0
+    for i in range(len(parts) - 1):
+        ring = pts[parts[i]:parts[i + 1]]
+        x = np.array([p[0] for p in ring])
+        y = np.array([p[1] for p in ring])
+        cross = x * np.roll(y, -1) - np.roll(x, -1) * y
+        a = cross.sum() / 2.0
+        if abs(a) < 1e-12:
+            continue
+        cx = ((x + np.roll(x, -1)) * cross).sum() / (6 * a)
+        cy = ((y + np.roll(y, -1)) * cross).sum() / (6 * a)
+        total_a += a
+        cx_sum += cx * a
+        cy_sum += cy * a
+    if abs(total_a) < 1e-12:
+        return pts[0]
+    return cx_sum / total_a, cy_sum / total_a
+
+
+def generate_ls_points_from_shp(shp_path, transform, H, W,
+                                max_per_poly=LS_MAX_POINTS_PER_POLY,
+                                max_jitter=LS_MAX_JITTER_PX):
+    """
+    每个滑坡多边形内部采样多个正样本点。
+
+    返回 list of (pid, x, y, jitter_px)：
+      - 候选 = 像元中心严格落在面内的像元（all_touched=False），
+        取 min(候选数, max_per_poly) 个，贪心最远点选取得尽量分散
+      - 无内部像元的多边形回退到质心（jitter=0）
+      - jitter_px：距离变换给出的安全偏移半径（保守按对角线距离折算，
+        保证偏移 sqrt(2)*j 后中心仍在面内），训练期随机抖动用；
+        保底 LS_MIN_JITTER_PX 像元（编目边界本身有 ±1 像元量级误差）
+    """
+    sf = shapefile.Reader(str(shp_path))
+    shapes = sf.shapes()
+    geoms = [(shp.__geo_interface__, i) for i, shp in enumerate(shapes)]
+    idmap = rasterize(
+        geoms, out_shape=(H, W), transform=transform, fill=-1,
+        all_touched=False, dtype="int32",
+    )
+
+    points = []
+    n_fallback = 0
+    for pid, shp in enumerate(tqdm(shapes, desc="Sampling polygons")):
+        mask = idmap == pid
+        npx = int(mask.sum())
+        if npx == 0:
+            cx, cy = _polygon_centroid(shp)
+            points.append((pid, float(cx), float(cy), LS_MIN_JITTER_PX))
+            n_fallback += 1
+            continue
+
+        dt = ndimage.distance_transform_edt(mask)  # 各内部像元到面外的距离（像元）
+        cand = np.argwhere(mask).astype(np.float64)
+        k = min(npx, max_per_poly)
+
+        # 贪心最远点：首个取离边界最远的（最稳妥），之后逐个取离已选集合最远的
+        first = int(np.argmax(dt[mask]))
+        chosen = [first]
+        while len(chosen) < k:
+            d = np.min(
+                np.linalg.norm(cand[:, None, :] - cand[None, np.array(chosen), :], axis=2),
+                axis=1,
+            )
+            chosen.append(int(np.argmax(d)))
+
+        for ci in chosen:
+            r, c = int(cand[ci, 0]), int(cand[ci, 1])
+            j = int(min(max((dt[r, c] - 0.5) / np.sqrt(2), 0.0), max_jitter))
+            j = max(j, LS_MIN_JITTER_PX)
+            x, y = xy(transform, r, c)
+            points.append((pid, float(x), float(y), j))
+
+    print("  多边形 %d 个 -> 正样本点 %d 个（%d 个小面回退质心）" % (
+        len(shapes), len(points), n_fallback))
+    return points
+
+
 def generate_nonls_points(transform, H, W, ls_mask, n_target, seed=42):
     """
     在TIF范围内随机生成非滑坡点：候选像元需未被滑坡面掩膜覆盖，
@@ -189,13 +261,13 @@ def main():
         crs = src.crs
     print("  CRS: %s" % crs)
 
-    # 2. 读取滑坡点
-    print("\nStep 2: Reading landslide points...")
-    ls_coords = read_ls_points_from_csv(LS_CSV)
-    print("  Landslide points: %d" % len(ls_coords))
+    # 2. 滑坡面内多点采样（每个多边形最多 LS_MAX_POINTS_PER_POLY 个点）
+    print("\nStep 2: Sampling positive points inside landslide polygons (max %d/poly)..."
+          % LS_MAX_POINTS_PER_POLY)
+    ls_points = generate_ls_points_from_shp(LS_SHP, transform, H, W)  # (pid, x, y, j)
 
     # 3. 生成非滑坡点（避开滑坡面掩膜）
-    n_target = int(len(ls_coords) * N_NONLS_RATIO)
+    n_target = int(len(ls_points) * N_NONLS_RATIO)
     print("\nStep 3: Generating non-landslide points (avoid landslide polygons, buffer=%d m)..." % NONLS_BUFFER_DIST)
     ls_mask = build_ls_mask(LS_SHP, transform, H, W, buffer_dist=NONLS_BUFFER_DIST)
     nonls_coords = generate_nonls_points(transform, H, W, ls_mask, n_target, seed=SEED)
@@ -203,7 +275,7 @@ def main():
 
     # 4. 提取patch
     print("\nStep 4: Extracting patches...")
-    all_samples = []   # (name, label, x, y)
+    all_samples = []   # (name, label, x, y, pid, j)
     center_vals = {}   # name -> patch 中心像元各通道值（供 Step 6 验证用）
 
     # 清空旧的sample目录中的npy文件
@@ -216,18 +288,18 @@ def main():
     skipped_ls = 0
     skipped_ls_nan = 0
     valid_ls = 0
-    for i, (x, y) in enumerate(tqdm(ls_coords, desc="Landslide")):
+    for i, (pid, x, y, j) in enumerate(tqdm(ls_points, desc="Landslide")):
         r, c = coord_to_rowcol(transform, x, y)
         if PAD <= r < H - PAD and PAD <= c < W - PAD:
             patch = extract_patch(data, r, c)
             if not np.isfinite(patch).all():
                 skipped_ls_nan += 1
                 continue
-            name = "ls_%05d" % i
+            name = "ls_%05d_%d" % (pid, i)
             if SAVE_NPY:
                 np.save(os.path.join(OUTPUT_DIR, name + ".npy"), patch)
             center_vals[name] = patch[:, PAD, PAD].copy()
-            all_samples.append((name, 1, x, y))
+            all_samples.append((name, 1, x, y, pid, j))
             valid_ls += 1
         else:
             skipped_ls += 1
@@ -247,7 +319,7 @@ def main():
             if SAVE_NPY:
                 np.save(os.path.join(OUTPUT_DIR, name + ".npy"), patch)
             center_vals[name] = patch[:, PAD, PAD].copy()
-            all_samples.append((name, 0, x, y))
+            all_samples.append((name, 0, x, y, -1, 0))
             valid_non += 1
         else:
             skipped_non += 1
@@ -258,28 +330,40 @@ def main():
     if skipped_ls_nan > 0 or skipped_non_nan > 0:
         print("  Skipped (contains NaN): %d LS, %d non-LS" % (skipped_ls_nan, skipped_non_nan))
 
-    # 5. 划分训练集/验证集
-    print("\nStep 5: Splitting train/val (8:2)...")
-    names = [s[0] for s in all_samples]
-    labels = [s[1] for s in all_samples]
+    # 5. 划分训练集/验证集：正样本按多边形划分（同一面的所有点进同一侧，
+    #    防止空间泄漏）；非滑坡点随机划分
+    print("\nStep 5: Splitting train/val (8:2, by polygon for LS)...")
+    rng = np.random.RandomState(SEED)
+    ls_pids = np.array(sorted({s[4] for s in all_samples if s[1] == 1}))
+    rng.shuffle(ls_pids)
+    n_val_pid = int(round(len(ls_pids) * 0.2))
+    val_pids = set(ls_pids[:n_val_pid].tolist())
 
-    train_names, val_names, train_labels, val_labels = train_test_split(
-        names, labels, test_size=0.2, random_state=SEED, stratify=labels
-    )
+    train_dict, val_dict = {}, {}
+    for name, label, x, y, pid, j in all_samples:
+        if label == 1:
+            (val_dict if pid in val_pids else train_dict)[name] = label
+        # 非滑坡点稍后统一随机分
 
-    train_dict = {n: l for n, l in zip(train_names, train_labels)}
-    val_dict = {n: l for n, l in zip(val_names, val_labels)}
+    nonls_names = [s[0] for s in all_samples if s[1] == 0]
+    rng.shuffle(nonls_names)
+    n_val_non = int(round(len(nonls_names) * 0.2))
+    for i, name in enumerate(nonls_names):
+        (val_dict if i < n_val_non else train_dict)[name] = 0
 
     with open(os.path.join(OUTPUT_DIR, "train_labels.json"), "w") as f:
         json.dump(train_dict, f, indent=2)
     with open(os.path.join(OUTPUT_DIR, "val_labels.json"), "w") as f:
         json.dump(val_dict, f, indent=2)
 
-    # 采样点 JSON（内存直读模式 RasterPatchDataset 使用，含投影坐标）
-    coords_by_name = {n: (x, y) for n, _, x, y in all_samples}
+    # 采样点 JSON（内存直读模式 RasterPatchDataset 使用；j = 训练期安全抖动半径）
+    rec_by_name = {s[0]: s for s in all_samples}
     def _points_records(d):
-        return [{"name": n, "x": coords_by_name[n][0], "y": coords_by_name[n][1], "label": l}
-                for n, l in d.items()]
+        recs = []
+        for n in d:
+            _, label, x, y, pid, j = rec_by_name[n]
+            recs.append({"name": n, "x": x, "y": y, "label": label, "pid": pid, "j": j})
+        return recs
     with open(os.path.join(OUTPUT_DIR, "train_points.json"), "w") as f:
         json.dump(_points_records(train_dict), f)
     with open(os.path.join(OUTPUT_DIR, "val_points.json"), "w") as f:
@@ -288,7 +372,6 @@ def main():
     # 6. 验证数据质量
     print("\nStep 6: Validating data quality...")
     n_check = min(2000, len(train_dict))  # 增加检查样本数，结果更稳定
-    rng = np.random.RandomState(SEED)
     ls_names = [k for k, v in train_dict.items() if v == 1]
     nols_names = [k for k, v in train_dict.items() if v == 0]
     ls_check = rng.choice(ls_names, size=min(n_check, len(ls_names)), replace=False).tolist()
@@ -313,11 +396,13 @@ def main():
         level = 'LARGE' if d > 0.8 else ('MEDIUM' if d > 0.5 else ('SMALL' if d > 0.2 else 'tiny'))
         print("    Ch%2d %-15s: LS=%10.3f  nonLS=%10.3f  d=%.3f (%s)" % (i, ch_names[i], ls_m, nols_m, d, level))
 
+    n_train_ls = sum(1 for v in train_dict.values() if v == 1)
+    n_val_ls = sum(1 for v in val_dict.values() if v == 1)
     print("\n" + "=" * 50)
     print("Done!")
     print("  Total: %d" % len(all_samples))
-    print("  Train: %d (LS=%d, non=%d)" % (len(train_dict), sum(train_labels), len(train_labels) - sum(train_labels)))
-    print("  Val:   %d (LS=%d, non=%d)" % (len(val_dict), sum(val_labels), len(val_labels) - sum(val_labels)))
+    print("  Train: %d (LS=%d, non=%d)" % (len(train_dict), n_train_ls, len(train_dict) - n_train_ls))
+    print("  Val:   %d (LS=%d, non=%d)" % (len(val_dict), n_val_ls, len(val_dict) - n_val_ls))
     print("  Output: %s" % OUTPUT_DIR)
     print("=" * 50)
 

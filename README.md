@@ -37,9 +37,18 @@
 ## 数据
 
 - **滑坡编目**：`Dataset/yonchuan/shp/landslides.shp`，2394 个滑坡多边形（EPSG:32648）
-- **质心点**：`Dataset/yonchuan/yongchuan_landslide_centroids.csv`（由多边形生成，正样本采样点）
 - **因子栅格**：`Dataset/yonchuan/factor_aligned/`，16 个已对齐到 30m 网格的 TIF（随仓库分发，约 30MB；已完成 nodata 清洗与单位修正）
 - **样本标签/采样点**：`sample_yongchuan/` 下的 `train/val_labels.json` 与 `train/val_points.json`
+
+**采样策略**（`src/data/extract_patches.py`）：
+
+- **正样本（8021 个中 4055 个）**：每个滑坡多边形内取"像元中心严格落在面内"的像元，
+  贪心最远点选取、上限 5 个/面；无内部像元的小面（577 个）回退到质心。
+  每个点附带安全抖动半径 `j`（距离变换计算，保底 ±1 像元 = 编目定位误差量级），
+  训练时 `RasterPatchDataset` 每个 epoch 在 ±j 内随机偏移 patch 中心（数据增强）
+- **非滑坡点**：全图随机采样，避开滑坡面覆盖的像元，数量与正样本 1:1
+- **train/val 划分**：正样本**按多边形** 8:2 划分（同一面的所有点进同一侧，防空间泄漏）；
+  非滑坡点随机 8:2
 
 > 仓库自带因子栅格与采样点，**克隆后可直接训练**（内存直读模式，
 > `train.py` 中 `USE_RASTER_DATA = True`：因子一次读入内存约 31MB，
@@ -109,10 +118,11 @@ python src/inference/predict.py
 # 因子对齐：把 Dataset/yonchuan/factor/ 下的原始 TIF 重投影到 30m 统一网格
 python src/data/align_factors.py
 
-# 滑坡多边形 -> 质心点 CSV（仓库已附带生成结果）
+# 滑坡多边形 -> 质心点 CSV（参考产物，采样已不再依赖它）
 python src/data/shp_centroids_to_csv.py
 
-# 重新采样：生成标签 + 采样点 JSON；SAVE_NPY=True 时同时写 .npy（供 USE_RASTER_DATA=False 的旧模式）
+# 重新采样：面内多点采样 + 按多边形划分 train/val，生成标签 + 采样点 JSON；
+# SAVE_NPY=True 时同时写 .npy（供 USE_RASTER_DATA=False 的旧模式）
 python src/data/extract_patches.py
 ```
 

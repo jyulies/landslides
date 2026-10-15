@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-全图预测（ConvNeXt-Tiny, 13ch, 31x31 patch）
-- 一次性载入 13 因子到内存 (C,H,W)
+全图预测（ConvNeXt-Tiny, 16ch, 31x31 patch）
+- 一次性载入 16 因子到内存 (C,H,W)
 - 瓦片推理：每个瓦片切成 (输出网格 th×tw)，用 unfold 视图产生 patch，分块+分批送 GPU
 - 预测输出为 class=1 的概率图（float32），GeoTIFF，LZW 压缩
+- 权重自动定位 checkpoints/ 下最新一次训练的 best .pth（可用 LANDSLIDE_WEIGHTS 覆盖）
 - 默认不做 nodata 检查（你已预处理干净）。如需开启，把 CHECK_NODATA=True 并设置 NODATA_VAL
 
 Reference / 引用：
@@ -37,11 +38,26 @@ from config import (
 from src.models.convnext import convnext_tiny_13ch_31
 
 # =============== 配置 ===============
-# 训练得到的权重（最新训练结果）
-WEIGHTS = os.environ.get(
-    "LANDSLIDE_WEIGHTS",
-    str(CHECKPOINTS_DIR / "20260704-213937" / "best_convnext_tiny31_trans.pth")
-)
+def _find_latest_weights():
+    """在 checkpoints/ 下自动定位最新一次训练的 best 权重。
+    目录按时间戳命名（YYYYMMDD-HHMMSS），字典序即时间序。"""
+    if not CHECKPOINTS_DIR.is_dir():
+        return None
+    for run_dir in sorted((d for d in CHECKPOINTS_DIR.iterdir() if d.is_dir()),
+                          key=lambda d: d.name, reverse=True):
+        ckpts = sorted(run_dir.glob("best*.pth")) or sorted(run_dir.glob("*.pth"))
+        if ckpts:
+            return str(ckpts[0])
+    return None
+
+# 训练得到的权重：优先取环境变量 LANDSLIDE_WEIGHTS，
+# 否则自动使用 checkpoints/ 下最新一次训练的 best 权重
+WEIGHTS = os.environ.get("LANDSLIDE_WEIGHTS") or _find_latest_weights()
+if WEIGHTS is None:
+    raise FileNotFoundError(
+        "未在 %s 下找到任何 .pth 权重；请先训练，"
+        "或设置环境变量 LANDSLIDE_WEIGHTS 指向权重文件" % CHECKPOINTS_DIR
+    )
 
 # 输出概率图（class=1 概率）
 OUT_TIF = os.environ.get(
@@ -125,6 +141,7 @@ def main():
     print(f"✔ 因子 shape = ({C},{H},{W})  -> 输出概率图 = ({out_rows},{out_cols})")
 
     # 3) 模型
+    print(f"✔ 使用权重: {WEIGHTS}")
     net = convnext_tiny_13ch_31(num_classes=2, in_ch=IN_CH, pretrained=False).to(DEVICE).eval()
     state = torch.load(WEIGHTS, map_location=DEVICE)
     net.load_state_dict(state)

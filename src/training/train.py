@@ -107,7 +107,7 @@ class CUDAPrefetcher:
 def build_dataloaders(batch_size=256, num_workers=4, prefetch_factor=2):
     train_tf, val_tf = make_transforms(MEAN_T, STD_T)
     if USE_RASTER_DATA:
-        train_set = RasterPatchDataset(FACTOR_PATHS, TRAIN_POINTS_JSON, transform=train_tf, patch=PATCH_SIZE)
+        train_set = RasterPatchDataset(FACTOR_PATHS, TRAIN_POINTS_JSON, transform=train_tf, patch=PATCH_SIZE, jitter=True)
         val_set   = RasterPatchDataset(FACTOR_PATHS, VAL_POINTS_JSON,   transform=val_tf,   patch=PATCH_SIZE)
         labels = [it[2] for it in train_set.items]
         print("Using RasterPatchDataset (in-memory, no .npy needed).")

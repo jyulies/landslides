@@ -15,7 +15,10 @@ JSON格式（示例）:
 数据文件: ROOT/sample_00001.npy  -> shape=(C,31,31), dtype=float32
 
 采样点 JSON（RasterPatchDataset 使用，extract_patches.py 生成）:
-[{"name": "ls_00001", "x": 586945.0, "y": 3251958.6, "label": 1}, ...]
+[{"name": "ls_00001_0", "x": 586945.0, "y": 3251958.6, "label": 1, "pid": 1, "j": 2}, ...]
+  - pid: 所属多边形 id（非滑坡点为 -1），train/val 按面划分的依据
+  - j:   训练期安全抖动半径（像元），j>0 时训练集每个 epoch 在 ±j 内随机偏移中心，
+         偏移后中心仍落在滑坡面内（由 extract_patches.py 的距离变换保证）
 
 Reference / 引用：
     Luo, S., Mao, W., Yang, Z., Zheng, G., He, Z., Wang, J., & Huang, Y. (2026).
@@ -74,13 +77,15 @@ class RasterPatchDataset(Dataset):
     通过 fork 共享内存（写时复制），不会按 worker 复制。
     """
 
-    def __init__(self, factor_paths, points_json, transform=None, patch=31):
+    def __init__(self, factor_paths, points_json, transform=None, patch=31, jitter=False):
         """
         Args:
             factor_paths: 因子 TIF 路径列表（顺序即通道顺序）
             points_json: 采样点 JSON 路径（extract_patches.py 生成的 *_points.json）
             transform: 可选的数据变换
             patch: patch 边长（默认 31）
+            jitter: True 时（训练集）按每个点的 j 半径随机偏移 patch 中心；
+                    验证集务必传 False
         """
         bands = []
         geo_transform = None
@@ -94,6 +99,7 @@ class RasterPatchDataset(Dataset):
         self.patch = patch
         self.pad = patch // 2
         self.transform = transform
+        self.jitter = jitter
 
         with open(points_json, "r", encoding="utf-8") as f:
             pts = json.load(f)
@@ -101,13 +107,17 @@ class RasterPatchDataset(Dataset):
         self.items = []
         for p in pts:
             r, c = rowcol(geo_transform, p["x"], p["y"])
-            self.items.append((int(r), int(c), int(p["label"])))
+            self.items.append((int(r), int(c), int(p["label"]), int(p.get("j", 0))))
 
     def __len__(self):
         return len(self.items)
 
     def __getitem__(self, idx):
-        row, col, label = self.items[idx]
+        row, col, label, j = self.items[idx]
+        if self.jitter and j > 0:
+            # 训练期中心抖动：偏移后中心仍在滑坡面内（半径由采样时的距离变换保证）
+            row += int(torch.randint(-j, j + 1, (1,)))
+            col += int(torch.randint(-j, j + 1, (1,)))
         C, H, W = self.data.shape
         pad = self.pad
         r0, r1 = row - pad, row + pad + 1
