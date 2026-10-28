@@ -2,7 +2,12 @@
 
 基于 ConvNeXt-Tiny + Lite-Transformer 的滑坡易发性深度学习制图项目，研究区为**重庆市永川区**。
 
-模型方法参考论文 **"CNXT-Ti-LT–Based Multi-Scale Feature–Aware Susceptibility Mapping of Rainfall-Induced Clustered Landslides in Southeast China"**（Luo et al., 2026, *JGR: Machine Learning and Computation*, [10.1029/2025JH001115](https://doi.org/10.1029/2025JH001115)），在其 13 因子体系上扩展了 3 个降雨因子。
+模型方法参考论文
+**"CNXT-Ti-LT–Based Multi-Scale Feature–Aware Susceptibility
+Mapping of Rainfall-Induced Clustered Landslides in Southeast
+China"**（Luo et al., 2026, *JGR: Machine Learning and Computation*,
+[10.1029/2025JH001115](https://doi.org/10.1029/2025JH001115)），
+在其 13 因子体系上扩展了 3 个降雨因子。
 
 ## 模型
 
@@ -37,7 +42,8 @@
 ## 数据
 
 - **滑坡编目**：`Dataset/yonchuan/shp/landslides.shp`，2394 个滑坡多边形（EPSG:32648）
-- **因子栅格**：`Dataset/yonchuan/factor_aligned/`，16 个已对齐到 30m 网格的 TIF（随仓库分发，约 30MB；已完成 nodata 清洗与单位修正）
+- **因子栅格**：`Dataset/yonchuan/factor_aligned/`，
+16 个已对齐到 30m 网格的 TIF（随仓库分发，约 30MB；已完成 nodata 清洗与单位修正）
 - **样本标签/采样点**：`sample_yongchuan/` 下的 `train/val_labels.json` 与 `train/val_points.json`
 
 **采样策略**（`src/data/extract_patches.py`）：
@@ -56,7 +62,7 @@
 
 ## 目录结构
 
-```
+```palin
 .
 ├── config.py                      # 集中配置：路径、16 因子、归一化统计量、超参
 ├── requirements.txt
@@ -166,10 +172,12 @@ python src/training/tune.py   # Optuna 搜索：20 组试验 × 10 epochs，独�
 
 ## 配置说明
 
-- 所有路径由 `config.py` 自动推导（以 `config.py` 所在目录为项目根），克隆到任意位置均可直接运行，无需修改；特殊情况可用环境变量 `LANDSLIDE_ROOT` 覆盖
+- 所有路径由 `config.py` 自动推导（以 `config.py` 所在目录为项目根）
+克隆到任意位置均可直接运行，无需修改；特殊情况可用环境变量 `LANDSLIDE_ROOT` 覆盖
 - 归一化统计量 `MEAN`/`STD` 已按永川样本集、16 通道预计算；若改动因子或样本，需重算并更新 `config.py`
-- 推理权重/输出路径可用环境变量 `LANDSLIDE_WEIGHTS` / `LANDSLIDE_OUTPUT` 覆盖；
-  跨区域场景另支持 `LANDSLIDE_FACTOR_DIR`（因子目录）、`LANDSLIDE_SAMPLE_DIR`（样本目录）、`LANDSLIDE_LS_SHP`（滑坡面 shp）
+- 推理权重/输出路径可用环境变量 `LANDSLIDE_WEIGHTS` / `LANDSLIDE_OUTPUT` 覆盖;
+  跨区域场景另支持 `LANDSLIDE_FACTOR_DIR`（因子目录）、`LANDSLIDE_SAMPLE_DIR`（样本目录）、
+`LANDSLIDE_LS_SHP`（滑坡面 shp）
 
 ## 引用
 

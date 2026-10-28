@@ -69,6 +69,26 @@ FACTORS = [
 ]
 
 
+# 其他区域的常见别名 -> (标准名, 数值缩放, 小于等于该值视为 nodata)
+# 永川流程不受影响：仅当 src_name 与标准名都找不到时才尝试别名
+# 多数别名视为已清洗（缩放 1.0、无掩膜）；已知问题数据在此登记修正，
+# 如汉源 Distanc_Faults.tif 的距离单位是度，乘 111000 近似转米
+ALIASES = {
+    "Landforms.tif":          ("Landform class.tif", 1.0,      None),
+    "Landform.tif":           ("Landform class.tif", 1.0,      None),
+    "Distanc_road.tif":       ("Distance2road.tif",  1.0,      None),
+    "Distanc_roads.tif":      ("Distance2road.tif",  1.0,      None),
+    "Distanc_road1.tif":      ("Distance2road.tif",  1.0,      None),
+    "Distance_road.tif":      ("Distance2road.tif",  1.0,      None),
+    "Distanc_Fault.tif":      ("Distance2fault.tif", 1.0,      None),
+    "Distanc_falut.tif":      ("Distance2fault.tif", 1.0,      None),
+    "Distanc_Faults.tif":     ("Distance2fault.tif", 111000.0, None),
+    "Daily_Max_mm_clip.tif":  ("DailyMax.tif",       1.0,      None),
+    "Acc_3d_mm_clip.tif":     ("Acc3d.tif",          1.0,      None),
+    "Acc_7d_mm_clip.tif":     ("Acc7d.tif",          1.0,      None),
+}
+
+
 def align_one(src_path, dst_path, ref_meta, is_categorical, scale, mask_leq):
     """把单个栅格重投影到参考网格，nodata 统一为 NaN。"""
     with rasterio.open(src_path) as src:
@@ -139,12 +159,19 @@ def main():
 
     for src_name, dst_name, is_cat, scale, mask_leq in FACTORS:
         # 优先匹配原始文件名（应用表中针对永川数据的修正）；
-        # 回退匹配标准名——标准命名的文件视为已清洗（单位为米、nodata 规范），不做修正
+        # 回退匹配标准名——标准命名的文件视为已清洗（单位为米、nodata 规范），不做修正；
+        # 再回退匹配其他区域别名（同样视为已清洗）
         src_path = src_dir / src_name
         fix_scale, fix_mask = scale, mask_leq
         if not src_path.exists():
             src_path = src_dir / dst_name
             fix_scale, fix_mask = 1.0, None
+        if not src_path.exists():
+            for alias, (std, a_scale, a_mask) in ALIASES.items():
+                if std == dst_name and (src_dir / alias).exists():
+                    src_path = src_dir / alias
+                    fix_scale, fix_mask = a_scale, a_mask
+                    break
         dst_path = dst_dir / dst_name
         if not src_path.exists():
             print("  !! 缺失: %s（也未找到标准名 %s）" % (src_name, dst_name))

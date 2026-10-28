@@ -27,6 +27,7 @@ sample_yongchuan/*.npy
 !Dataset/yonchuan/*.csv
 # 永川对齐后的因子栅格体积可控（16 个共约 30MB），随仓库分发
 !Dataset/yonchuan/factor_aligned/*.tif
+!Dataset/model/yonchuan/factor_aligned/*.tif
 
 # Author-provided factor rasters
 Controlling_Factors/

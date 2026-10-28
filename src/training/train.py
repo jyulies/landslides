@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, WeightedRandomSampler
+from torch.utils.data import DataLoader, WeightedRandomSampler, ConcatDataset
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
@@ -47,7 +47,11 @@ EARLY_STOP   = True
 ES_PATIENCE  = 12    # val_loss 连续 12 轮无实质改善则停止
 ES_MIN_DELTA = 1e-3  # 视为"改善"的最小下降幅度
 
-from config import PROJECT_ROOT, SAMPLE_DIR, CHECKPOINTS_DIR, LOGS_DIR, MEAN, STD, SEED, IN_CH, FACTOR_PATHS, PATCH_SIZE, NUM_WORKERS
+from config import (
+    PROJECT_ROOT, SAMPLE_DIR, CHECKPOINTS_DIR, LOGS_DIR, MEAN, STD, SEED,
+    IN_CH, FACTOR_PATHS, PATCH_SIZE, NUM_WORKERS, USE_RAINFALL,
+    TRAIN_REGIONS, VAL_REGIONS, SAMPLE_MULTI_DIR, region_factor_paths,
+)
 from src.data.dataset import LandslideDataset, RasterPatchDataset
 from src.data.transforms import make_transforms
 from src.models.convnext import convnext_tiny_13ch_31
@@ -114,7 +118,25 @@ class CUDAPrefetcher:
 # ===== 数据 + 模型 + 训练的“可复用封装” =====
 def build_dataloaders(batch_size=256, num_workers=4, prefetch_factor=2):
     train_tf, val_tf = make_transforms(MEAN_T, STD_T)
-    if USE_RASTER_DATA:
+    if TRAIN_REGIONS is not None:
+        # 多区域模式：每区一个 RasterPatchDataset（各自因子栈 + 采样点），
+        # ConcatDataset 合并；train 区全部进训练集，val 区全部进验证集
+        train_set = ConcatDataset([
+            RasterPatchDataset(region_factor_paths(r),
+                               str(SAMPLE_MULTI_DIR / r / "train_points.json"),
+                               transform=train_tf, patch=PATCH_SIZE, jitter=True)
+            for r in TRAIN_REGIONS
+        ])
+        val_set = ConcatDataset([
+            RasterPatchDataset(region_factor_paths(r),
+                               str(SAMPLE_MULTI_DIR / r / "val_points.json"),
+                               transform=val_tf, patch=PATCH_SIZE)
+            for r in VAL_REGIONS
+        ])
+        labels = [it[2] for ds in train_set.datasets for it in ds.items]
+        print("Using multi-region RasterPatchDataset: train=%s val=%s (rainfall=%s, %dch)"
+              % (TRAIN_REGIONS, VAL_REGIONS, USE_RAINFALL, IN_CH))
+    elif USE_RASTER_DATA:
         train_set = RasterPatchDataset(FACTOR_PATHS, TRAIN_POINTS_JSON, transform=train_tf, patch=PATCH_SIZE, jitter=True)
         val_set   = RasterPatchDataset(FACTOR_PATHS, VAL_POINTS_JSON,   transform=val_tf,   patch=PATCH_SIZE)
         labels = [it[2] for it in train_set.items]
@@ -139,7 +161,9 @@ def build_dataloaders(batch_size=256, num_workers=4, prefetch_factor=2):
         print("Class balanced. Using plain shuffle.")
 
     dl_kwargs = dict(num_workers=num_workers, pin_memory=True, persistent_workers=(num_workers>0),
-                     prefetch_factor=(prefetch_factor if num_workers > 0 else None), collate_fn=train_set.collate_fn, drop_last=False)
+                     prefetch_factor=(prefetch_factor if num_workers > 0 else None),
+                     collate_fn=getattr(train_set, "collate_fn", RasterPatchDataset.collate_fn),
+                     drop_last=False)
 
     train_loader = DataLoader(train_set, batch_size=batch_size, sampler=sampler, shuffle=shuffle_flag, **dl_kwargs)
     val_loader   = DataLoader(val_set,   batch_size=batch_size, shuffle=False, **dl_kwargs)
@@ -188,6 +212,8 @@ def run_training(epochs=80, warmup_epochs=3, lr=3e-4, weight_decay=1e-4,
     run_config = {
         "run_id": RUN_ID, "seed": SEED, "device": str(DEVICE),
         "root": ROOT, "train_json": TRAIN_JSON, "val_json": VAL_JSON,
+        "train_regions": TRAIN_REGIONS, "val_regions": VAL_REGIONS,
+        "use_rainfall": USE_RAINFALL, "in_ch": IN_CH,
         "epochs": epochs, "warmup_epochs": warmup_epochs, "batch_size": batch_size,
         "optimizer": {"type":"AdamW","lr":lr,"weight_decay":weight_decay},
         "scheduler": "CosineAnnealingLR (eta_min=1e-6)",

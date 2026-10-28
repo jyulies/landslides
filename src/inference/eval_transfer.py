@@ -12,7 +12,8 @@ NaN 像元（概率图边界）在两类中都排除
         --prob output/prob_<新区>.tif \
         --shp  Dataset/<新区>/shp/landslides.shp
 
-注意：shp 与概率图必须同一坐标系（代码会做重叠度 sanity check 并警告）。
+注意：shp 可以是任意坐标系——读取 .prj 后自动重投影到概率图 CRS
+（无 .prj 时假定与概率图一致，并做重叠度 sanity check）。
 """
 import argparse
 import sys
@@ -22,6 +23,7 @@ import numpy as np
 import rasterio
 import shapefile  # pyshp
 from rasterio.features import rasterize
+from rasterio.warp import transform_geom
 from scipy import ndimage
 from sklearn.metrics import roc_auc_score, average_precision_score
 
@@ -48,9 +50,25 @@ def main():
     H, W = prob.shape
     print("概率图: %dx%d, crs=%s" % (W, H, crs))
 
-    # 2) 滑坡面栅格化到概率图网格
+    # 2) 滑坡面栅格化到概率图网格（shp 任意 CRS，自动重投影）
     sf = shapefile.Reader(str(args.shp))
-    geoms = [shp.__geo_interface__ for shp in sf.shapes()]
+    prj = Path(str(args.shp).replace(".shp", ".prj"))
+    src_crs = None
+    if prj.exists():
+        try:
+            src_crs = rasterio.crs.CRS.from_wkt(prj.read_text(errors="ignore"))
+        except Exception:
+            print("!! 无法解析 %s，假定 shp 与概率图同坐标系" % prj.name)
+    else:
+        print("!! 缺少 .prj，假定 shp 与概率图同坐标系")
+    if src_crs and src_crs != crs:
+        print("shp 坐标系 %s != 概率图 %s，自动重投影" % (src_crs.to_epsg() or src_crs, crs.to_epsg() or crs))
+    geoms = []
+    for shp in sf.shapes():
+        g = shp.__geo_interface__
+        if src_crs and src_crs != crs:
+            g = transform_geom(src_crs, crs, g)
+        geoms.append(g)
     mask = rasterize(geoms, out_shape=(H, W), transform=transform, fill=0,
                      default_value=1, all_touched=True, dtype="uint8").astype(bool)
     n_pos_px = int(mask.sum())

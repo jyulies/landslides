@@ -33,34 +33,60 @@ LOGS_DIR = PROJECT_ROOT / "logs"              # 训练日志目录
 OUTPUT_DIR = PROJECT_ROOT / "output"          # 推理结果输出目录
 DATASET_DIR = PROJECT_ROOT / "Dataset" / "yonchuan"  # 永川原始数据目录
 # 因子 TIF 目录（已对齐到 30m 网格）。跨区域预测时用 LANDSLIDE_FACTOR_DIR
-# 指向新区的因子目录即可，其余（权重、MEAN/STD）保持永川不变
+# 指向新区的因子目录即可，其余（权重、MEAN/STD）保持训练时不变
 FACTORS_DIR = Path(os.environ.get("LANDSLIDE_FACTOR_DIR", DATASET_DIR / "factor_aligned"))
 
 # -----------------------------------------------------------------------------
-# 16 个控制因子栅格路径（顺序必须与模型输入顺序一致）
+# 多区域训练（model/ 下 5 区）：TRAIN_REGIONS 训练、VAL_REGIONS 验证；
+# 两者均为 None 时回退到单区永川流程（sample_yongchuan + LS_SHP）
+# -----------------------------------------------------------------------------
+MODEL_DIR = PROJECT_ROOT / "Dataset" / "model"
+TRAIN_REGIONS = ["fuling", "huayingshan", "wanzhou", "yonchuan"]
+VAL_REGIONS = ["nanjiang"]
+SAMPLE_MULTI_DIR = PROJECT_ROOT / "sample_multi"  # extract_patches_multi.py 输出目录
+
+# 是否使用 3 个降雨通道（DailyMax/Acc3d/Acc7d）。
+# False = 13 通道静态因子：model/ 下多数区缺降雨栅格，13 通道时所有区齐备；
+# True  = 16 通道（仅 wanzhou/yonchuan 有降雨），复现永川原流程
+USE_RAINFALL = False
+
+# -----------------------------------------------------------------------------
+# 控制因子栅格文件名（顺序必须与模型输入顺序一致）
 # 前 13 个为静态因子，后 3 个为降雨因子（最大单日、3 日累计、7 日累计）
 # -----------------------------------------------------------------------------
-FACTOR_PATHS = [
-    FACTORS_DIR / "Elevation.tif",
-    FACTORS_DIR / "Slope.tif",
-    FACTORS_DIR / "Aspect.tif",
-    FACTORS_DIR / "TPI.tif",
-    FACTORS_DIR / "Landform class.tif",
-    FACTORS_DIR / "TRI.tif",
-    FACTORS_DIR / "Profile Curvature.tif",
-    FACTORS_DIR / "Plan Curvature.tif",
-    FACTORS_DIR / "TWI.tif",
-    FACTORS_DIR / "Lithology.tif",
-    FACTORS_DIR / "Distance2fault.tif",
-    FACTORS_DIR / "NDVI.tif",
-    FACTORS_DIR / "Distance2road.tif",
-    FACTORS_DIR / "DailyMax.tif",
-    FACTORS_DIR / "Acc3d.tif",
-    FACTORS_DIR / "Acc7d.tif",
+_FACTOR_NAMES = [
+    "Elevation.tif",
+    "Slope.tif",
+    "Aspect.tif",
+    "TPI.tif",
+    "Landform class.tif",
+    "TRI.tif",
+    "Profile Curvature.tif",
+    "Plan Curvature.tif",
+    "TWI.tif",
+    "Lithology.tif",
+    "Distance2fault.tif",
+    "NDVI.tif",
+    "Distance2road.tif",
+    # 降雨因子（USE_RAINFALL=True 时才纳入）
+    "DailyMax.tif",
+    "Acc3d.tif",
+    "Acc7d.tif",
 ]
+
+_ACTIVE_FACTOR_NAMES = _FACTOR_NAMES if USE_RAINFALL else _FACTOR_NAMES[:13]
+
+# 单区因子路径（预测/单区采样用）
+FACTOR_PATHS = [FACTORS_DIR / n for n in _ACTIVE_FACTOR_NAMES]
 
 # 模型输入通道数（全项目统一以此为准，不要硬编码）
 IN_CH = len(FACTOR_PATHS)
+
+
+def region_factor_paths(region_name):
+    """model/ 下某区的因子路径列表（通道顺序与 FACTOR_PATHS 一致）"""
+    d = MODEL_DIR / region_name / "factor_aligned"
+    return [d / n for n in _ACTIVE_FACTOR_NAMES]
 
 # -----------------------------------------------------------------------------
 # 表格数据文件（由 src/data/shp_centroids_to_csv.py 从滑坡多边形生成）
@@ -70,21 +96,29 @@ LS_CSV = DATASET_DIR / "yongchuan_landslide_centroids.csv"
 LS_SHP = Path(os.environ.get("LANDSLIDE_LS_SHP", DATASET_DIR / "shp" / "landslides.shp"))
 
 # -----------------------------------------------------------------------------
-# 归一化统计量（基于永川 8021 个 16 通道样本 patch 的所有像元计算；
-# 正样本 = 滑坡面内多点采样，见 extract_patches.py）
-# 通道顺序 = FACTOR_PATHS：13 静态因子 + DailyMax/Acc3d/Acc7d
+# 归一化统计量（长度 = IN_CH）
+# 16 通道旧值（基于永川 8021 个 16 通道样本 patch 的所有像元计算；
+# 正样本 = 滑坡面内多点采样，见 extract_patches.py）：
+#   MEAN_16 = [480.739376, 16.923965, 190.493486, 0.014844, 6.059110,
+#              6.444507, -0.000248, 0.000950, 7.052289, 4.051166,
+#              2870.680181, 93.692619, 318.930814, 62.657755, 105.427465,
+#              123.571305]
+#   STD_16  = [171.721294, 10.010436, 92.120911, 6.264623, 1.818615,
+#              3.781557, 0.003240, 0.060249, 1.733574, 1.635219,
+#              2231.025014, 5.071201, 273.013350, 5.783752, 8.084047,
+#              8.928690]
+# 当前 13 通道值：MEAN/STD 由 compute_norm_stats.py 在 4 个训练区
+# （fuling/huayingshan/wanzhou/yonchuan）训练样本 patch 上重算
 # -----------------------------------------------------------------------------
 MEAN = [
-    480.739376, 16.923965, 190.493486, 0.014844, 6.059110,
+    489.260387, 19.282558, 184.088355, 0.014844, 6.059110,
     6.444507, -0.000248, 0.000950, 7.052289, 4.051166,
-    2870.680181, 93.692619, 318.930814, 62.657755, 105.427465,
-    123.571305,
+    2870.680181, 93.692619, 318.930814,
 ]
 STD = [
     171.721294, 10.010436, 92.120911, 6.264623, 1.818615,
     3.781557, 0.003240, 0.060249, 1.733574, 1.635219,
-    2231.025014, 5.071201, 273.013350, 5.783752, 8.084047,
-    8.928690,
+    2231.025014, 5.071201, 273.013350,
 ]
 
 # -----------------------------------------------------------------------------
